@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Dashboard | QMS</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+  <link rel="stylesheet" href="global.css" />
+</head>
+<body>
+
+<div class="app-layout">
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <div class="logo">
+        <i class="bi bi-files"></i>
+        <a href="dashboard-cc-owner.html" style="color: inherit; text-decoration: none;"><span>EA QMS</span></a>
+      </div>
+    </div>
+
+    <div class="sidebar-body">
+      <nav>
+        <a href="dashboard-cc-owner.html" class="active">Dashboard</a>
+        <a href="all-change-controls.html">All Change Controls</a>
+        <a href="my-change-controls.html">My Change Controls</a>
+        <a href="approvals-empty.html">Approvals</a>
+        <a href="settings-profile-enduser.html">Settings</a>
+      </nav>
+    </div>
+  </aside>
+
+  <main class="content">
+    
+    <!-- Page Header -->
+    <div class="page-header-with-action">
+      <div>
+        <h1>Dashboard</h1>
+        <p class="page-subtitle">Welcome back, John Doe</p>
+      </div>
+      <a href="cc-form-initated-state.html" class="btn primary">
+        <i class="bi bi-plus-circle"></i> Create Change Control
+      </a>
+    </div>
+
+    <!-- Action Required Section -->
+    <section class="dashboard-section">
+      <h2 class="dashboard-section-title">
+        <i class="bi bi-exclamation-circle"></i> Action Required
+      </h2>
+      
+      <div class="dashboard-grid-2">
+        <!-- Pending Approvals Card - EMPTY STATE (User is not an approver) -->
+        <div class="dashboard-card card-highlight">
+          <div class="dashboard-card-header">
+            <div>
+              <h3>Pending Approvals</h3>
+              <p class="dashboard-card-subtitle">Changes awaiting your decision</p>
+            </div>
+            <span class="dashboard-stat-number">0</span>
+          </div>
+          <div class="dashboard-card-body">
+            <div class="dashboard-empty-state">
+              <i class="bi bi-check-circle"></i>
+              <p>No pending approvals</p>
+            </div>
+          </div>
+          <div class="dashboard-card-footer">
+            <a href="approvals-empty.html" class="dashboard-link">View All Approvals <i class="bi bi-arrow-right"></i></a>
+          </div>
+        </div>
+
+        <!-- My Drafts Card - POPULATED (User owns CCs) -->
+        <div class="dashboard-card card-highlight">
+          <div class="dashboard-card-header">
+            <div>
+              <h3>My Drafts</h3>
+              <p class="dashboard-card-subtitle">Initiated but not submitted</p>
+            </div>
+            <span class="dashboard-stat-number">1</span>
+          </div>
+          <div class="dashboard-card-body">
+            <ul class="dashboard-list">
+              <li>
+                <span class="dashboard-list-id">CC-001</span>
+                <span class="dashboard-list-title">Kiosk payment receipt display update</span>
+                <span class="table-badge badge-initiated">Initiated</span>
+              </li>
+            </ul>
+          </div>
+          <div class="dashboard-card-footer">
+            <a href="my-change-controls.html" class="dashboard-link">View My Change Controls <i class="bi bi-arrow-right"></i></a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Overview Section - ALWAYS SHOWS (System-wide stats) -->
+    <section class="dashboard-section">
+      <h2 class="dashboard-section-title">
+        <i class="bi bi-bar-chart"></i> Overview
+      </h2>
+      
+      <div class="dashboard-grid-5">
+        <!-- Stat Card: Initiated -->
+        <a href="all-change-controls.html" class="stat-card">
+          <div class="stat-icon" style="background: var(--color-status-initiated-bg); color: var(--color-status-initiated-text);">
+            <i class="bi bi-file-earmark-text"></i>
+          </div>
+          <div class="stat-content">
+            <div class="stat-number">3</div>
+            <div class="stat-label">Initiated</div>
+          </div>
+        </a>
+
+        <!-- Stat Card: Pending Approval -->
+        <a href="all-change-controls.html" class="stat-card">
+          <div class="stat-icon" style="background: var(--color-status-pending-impl-bg); color: var(--color-status-pending-impl-text);">
+            <i class="bi bi-clock-history"></i>
+          </div>
+          <div class="stat-content">
+            <div class="stat-number">5</div>
+            <div class="stat-label">Pending Approval</div>
+          </div>
+        </a>
+
+        <!-- Stat Card: In Implementation -->
+        <a href="all-change-controls.html" class="stat-card">
+          <div class="stat-icon" style="background: var(--color-status-in-impl-bg); color: var(--color-status-in-impl-text);">
+            <i class="bi bi-gear"></i>
+          </div>
+          <div class="stat-content">
+            <div class="stat-number">2</div>
+            <div class="stat-label">In Implementation</div>
+          </div>
+        </a>
+
+        <!-- Stat Card: Pending Final -->
+        <a href="all-change-controls.html" class="stat-card">
+          <div class="stat-icon" style="background: var(--color-status-pending-final-bg); color: var(--color-status-pending-final-text);">
+            <i class="bi bi-hourglass-split"></i>
+          </div>
+          <div class="stat-content">
+            <div class="stat-number">1</div>
+            <div class="stat-label">Pending Final</div>
+          </div>
+        </a>
+
+        <!-- Stat Card: Closed -->
+        <a href="all-change-controls.html" class="stat-card">
+          <div class="stat-icon" style="background: var(--color-status-closed-bg); color: var(--color-status-closed-text);">
+            <i class="bi bi-check-circle"></i>
+          </div>
+          <div class="stat-content">
+            <div class="stat-number">24</div>
+            <div class="stat-label">Closed</div>
+          </div>
+        </a>
+      </div>
+    </section>
+
+    <!-- Recent Activity Section - POPULATED (Shows their CCs) -->
+    <section class="dashboard-section">
+      <h2 class="dashboard-section-title">
+        <i class="bi bi-clock"></i> Recent Activity
+      </h2>
+      
+      <div class="card">
+        <div class="table-container">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>CC ID</th>
+                <th>Change Title</th>
+                <th>Current State</th>
+                <th>Last Updated</th>
+                <th>Updated By</th>
+                <th class="table-actions-col">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              
+              <tr>
+                <td class="table-id">CC-003</td>
+                <td class="table-title">Security patch deployment for payment gateway</td>
+                <td>
+                  <span class="table-badge badge-in-implementation">In Implementation</span>
+                </td>
+                <td>23 Jan 2026, 9:15 AM</td>
+                <td>John Doe</td>
+                <td class="table-actions">
+                  <a href="cc-form-closed.html" class="btn-icon" title="View">
+                    <i class="bi bi-eye"></i>
+                  </a>
+                </td>
+              </tr>
+
+              <tr>
+                <td class="table-id">CC-001</td>
+                <td class="table-title">Kiosk payment receipt currency display update</td>
+                <td>
+                  <span class="table-badge badge-initiated">Initiated</span>
+                </td>
+                <td>21 Jan 2026, 4:50 PM</td>
+                <td>John Doe</td>
+                <td class="table-actions">
+                  <a href="cc-form-closed.html" class="btn-icon" title="View">
+                    <i class="bi bi-eye"></i>
+                  </a>
+                </td>
+              </tr>
+
+            </tbody>
+          </table>
+        </div>
+        
+        <div style="margin-top: var(--spacing-lg); text-align: center;">
+          <a href="all-change-controls.html" class="dashboard-link-standalone">View All Change Controls <i class="bi bi-arrow-right"></i></a>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+</body>
+</html>

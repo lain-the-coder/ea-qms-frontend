@@ -1,0 +1,421 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Settings | QMS</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"
+    />
+    <link rel="stylesheet" href="global.css" />
+  </head>
+  <body>
+    <div class="app-layout">
+      <aside class="sidebar">
+        <div class="sidebar-header">
+          <div class="logo">
+            <i class="bi bi-files"></i>
+            <a href="dashboard-empty.html"><span>EA QMS</span></a>
+          </div>
+        </div>
+        <div class="sidebar-body">
+          <nav>
+            <a href="dashboard-empty.html">Dashboard</a>
+            <a href="all-change-controls.html">All Change Controls</a>
+            <a href="my-change-controls-empty.html">My Change Controls</a>
+            <a href="approvals-empty.html">Approvals</a>
+            <a href="settings-admin.html" class="active">Settings</a>
+          </nav>
+        </div>
+      </aside>
+
+      <main class="content">
+        <div class="page-header-with-action">
+          <div>
+            <h1>Settings</h1>
+            <p class="page-subtitle">
+              Manage users and your account preferences
+            </p>
+          </div>
+        </div>
+
+        <div class="settings-layout">
+          <nav class="settings-nav">
+            <a href="settings-admin.html" class="active">
+              <i class="bi bi-people"></i> User Management
+            </a>
+            <a href="settings-profile.html">
+              <i class="bi bi-person-circle"></i> Profile
+            </a>
+          </nav>
+
+          <div class="settings-content">
+            <!-- ================== Create User ================== -->
+            <section class="card">
+              <h2 style="margin-top: 0">Create New User</h2>
+              <p class="page-subtitle" style="margin-bottom: var(--spacing-xl)">
+                New users can sign in immediately with the credentials you set.
+              </p>
+
+              <div class="create-user-grid">
+                <div class="form-group">
+                  <label>Full Name *</label>
+                  <input
+                    type="text"
+                    class="form-control"
+                    placeholder="e.g. Sarah Johnson"
+                  />
+                </div>
+                <div class="form-group">
+                  <label>Email Address *</label>
+                  <input
+                    type="email"
+                    class="form-control"
+                    placeholder="name@eami.ae"
+                  />
+                </div>
+
+                <div class="form-group">
+                  <label>Password *</label>
+                  <input
+                    type="password"
+                    class="form-control"
+                    placeholder="Set initial password"
+                  />
+                </div>
+                <div class="form-group">
+                  <label>Role *</label>
+                  <select class="form-control">
+                    <option value="">Select role</option>
+                    <option>CC Owner</option>
+                    <option>Approver</option>
+                    <option>Viewer</option>
+                    <option>Admin</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <button
+                    class="btn primary"
+                    style="width: 100%; justify-content: center"
+                  >
+                    <i class="bi bi-person-plus"></i> Add User
+                  </button>
+                </div>
+              </div>
+            </section>
+
+            <!-- ================== User List ================== -->
+            <section class="card">
+              <h2 style="margin-top: 0">All Users</h2>
+
+              <div class="table-container" style="margin: 0; padding: 0">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>Full Name</th>
+                      <th>Email</th>
+                      <th>Role</th>
+                      <th>Created On</th>
+                      <th>Status</th>
+                      <th class="table-actions-col">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <!-- Logged-in Admin -->
+                    <tr>
+                      <td style="font-weight: var(--font-weight-medium)">
+                        Fatima Al Mansoori
+                        <span
+                          style="
+                            font-size: var(--font-size-xs);
+                            color: var(--color-text-light);
+                            margin-left: 6px;
+                          "
+                          >(you)</span
+                        >
+                      </td>
+                      <td style="color: var(--color-text-secondary)">
+                        fatima.almansoori@eami.ae
+                      </td>
+                      <td><span class="user-role-badge admin">Admin</span></td>
+                      <td style="color: var(--color-text-secondary)">
+                        01 Jan 2025
+                      </td>
+                      <td>
+                        <label class="toggle-switch">
+                          <input type="checkbox" checked disabled />
+                          <span class="toggle-track"></span>
+                          <span class="toggle-label">Active</span>
+                        </label>
+                      </td>
+                      <td class="table-actions">
+                        <span
+                          style="
+                            font-size: var(--font-size-xs);
+                            color: var(--color-text-light);
+                          "
+                          >&mdash;</span
+                        >
+                      </td>
+                    </tr>
+
+                    <!-- Approver -->
+                    <tr>
+                      <td style="font-weight: var(--font-weight-medium)">
+                        Jane Smith
+                      </td>
+                      <td style="color: var(--color-text-secondary)">
+                        jane.smith@eami.ae
+                      </td>
+                      <td>
+                        <span class="user-role-badge approver">Approver</span>
+                      </td>
+                      <td style="color: var(--color-text-secondary)">
+                        02 Jan 2025
+                      </td>
+                      <td>
+                        <label class="toggle-switch">
+                          <input type="checkbox" checked />
+                          <span class="toggle-track"></span>
+                          <span class="toggle-label">Active</span>
+                        </label>
+                      </td>
+                      <td class="table-actions">
+                        <button class="btn-icon-sm" title="Edit user">
+                          <i class="bi bi-pencil"></i>
+                        </button>
+                      </td>
+                    </tr>
+
+                    <!-- ===== Inline edit — role change BLOCKED (BR-8.4.11) ===== -->
+                    <tr style="background: #fafbff">
+                      <td>
+                        <input
+                          type="text"
+                          class="inline-edit-input"
+                          value="John Doe"
+                        />
+                      </td>
+                      <td style="color: var(--color-text-secondary)">
+                        john.doe@eami.ae
+                      </td>
+                      <td>
+                        <select class="inline-edit-select">
+                          <option>CC Owner</option>
+                          <option selected>Viewer</option>
+                          <option>Approver</option>
+                          <option>Admin</option>
+                        </select>
+                      </td>
+                      <td style="color: var(--color-text-secondary)">
+                        05 Jan 2025
+                      </td>
+                      <td>
+                        <label class="toggle-switch">
+                          <input type="checkbox" checked />
+                          <span class="toggle-track"></span>
+                          <span class="toggle-label">Active</span>
+                        </label>
+                      </td>
+                      <td class="table-actions">
+                        <div
+                          style="
+                            display: flex;
+                            align-items: center;
+                            gap: var(--spacing-xs);
+                          "
+                        >
+                          <button class="btn-icon-sm save" title="Save">
+                            <i class="bi bi-check-lg"></i>
+                          </button>
+                          <button class="btn-icon-sm" title="Cancel">
+                            <i class="bi bi-x-lg"></i>
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+
+                    <tr class="role-block-row">
+                      <td colspan="6">
+                        <div class="role-block-msg">
+                          <i class="bi bi-exclamation-triangle-fill"></i>
+                          <div>
+                            <strong>Role change blocked.</strong>
+                            John Doe is associated with active Change Controls
+                            <strong>CC-001</strong> and <strong>CC-003</strong>.
+                            These records must be Closed or Cancelled before the
+                            role can be changed. No part of this change has been
+                            saved.
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+
+                    <!-- CC Owner -->
+                    <tr>
+                      <td style="font-weight: var(--font-weight-medium)">
+                        Mike Chen
+                      </td>
+                      <td style="color: var(--color-text-secondary)">
+                        mike.chen@eami.ae
+                      </td>
+                      <td>
+                        <span class="user-role-badge cc-owner">CC Owner</span>
+                      </td>
+                      <td style="color: var(--color-text-secondary)">
+                        12 Jan 2025
+                      </td>
+                      <td>
+                        <label class="toggle-switch">
+                          <input type="checkbox" checked />
+                          <span class="toggle-track"></span>
+                          <span class="toggle-label">Active</span>
+                        </label>
+                      </td>
+                      <td class="table-actions">
+                        <button class="btn-icon-sm" title="Edit user">
+                          <i class="bi bi-pencil"></i>
+                        </button>
+                      </td>
+                    </tr>
+
+                    <!-- CC Owner -->
+                    <tr>
+                      <td style="font-weight: var(--font-weight-medium)">
+                        Emily Rodriguez
+                      </td>
+                      <td style="color: var(--color-text-secondary)">
+                        emily.rodriguez@eami.ae
+                      </td>
+                      <td>
+                        <span class="user-role-badge cc-owner">CC Owner</span>
+                      </td>
+                      <td style="color: var(--color-text-secondary)">
+                        15 Jan 2025
+                      </td>
+                      <td>
+                        <label class="toggle-switch">
+                          <input type="checkbox" checked />
+                          <span class="toggle-track"></span>
+                          <span class="toggle-label">Active</span>
+                        </label>
+                      </td>
+                      <td class="table-actions">
+                        <button class="btn-icon-sm" title="Edit user">
+                          <i class="bi bi-pencil"></i>
+                        </button>
+                      </td>
+                    </tr>
+
+                    <!-- ===== Inline edit — role change ALLOWED (no active records) ===== -->
+                    <tr style="background: #fafbff">
+                      <td>
+                        <input
+                          type="text"
+                          class="inline-edit-input"
+                          value="Sarah Johnson"
+                        />
+                      </td>
+                      <td style="color: var(--color-text-secondary)">
+                        sarah.johnson@eami.ae
+                      </td>
+                      <td>
+                        <select class="inline-edit-select">
+                          <option>CC Owner</option>
+                          <option selected>Approver</option>
+                          <option>Viewer</option>
+                          <option>Admin</option>
+                        </select>
+                      </td>
+                      <td style="color: var(--color-text-secondary)">
+                        20 Jan 2025
+                      </td>
+                      <td>
+                        <label class="toggle-switch">
+                          <input type="checkbox" checked />
+                          <span class="toggle-track"></span>
+                          <span class="toggle-label">Active</span>
+                        </label>
+                      </td>
+                      <td class="table-actions">
+                        <div
+                          style="
+                            display: flex;
+                            align-items: center;
+                            gap: var(--spacing-xs);
+                          "
+                        >
+                          <button class="btn-icon-sm save" title="Save">
+                            <i class="bi bi-check-lg"></i>
+                          </button>
+                          <button class="btn-icon-sm" title="Cancel">
+                            <i class="bi bi-x-lg"></i>
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+
+                    <!-- Viewer — Inactive -->
+                    <tr style="opacity: 0.6">
+                      <td style="font-weight: var(--font-weight-medium)">
+                        Omar Al Rashidi
+                      </td>
+                      <td style="color: var(--color-text-secondary)">
+                        omar.alrashidi@eami.ae
+                      </td>
+                      <td>
+                        <span class="user-role-badge viewer">Viewer</span>
+                      </td>
+                      <td style="color: var(--color-text-secondary)">
+                        03 Mar 2025
+                      </td>
+                      <td>
+                        <label class="toggle-switch">
+                          <input type="checkbox" />
+                          <span class="toggle-track"></span>
+                          <span
+                            class="toggle-label"
+                            style="color: var(--color-text-light)"
+                            >Inactive</span
+                          >
+                        </label>
+                      </td>
+                      <td class="table-actions">
+                        <button class="btn-icon-sm" title="Edit user">
+                          <i class="bi bi-pencil"></i>
+                        </button>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <div class="pagination">
+                <div class="pagination-info">Showing 1&ndash;7 of 7 users</div>
+                <div class="pagination-controls">
+                  <button class="pagination-btn" disabled>
+                    <i class="bi bi-chevron-left"></i> Previous
+                  </button>
+                  <button class="pagination-btn active">1</button>
+                  <button class="pagination-btn" disabled>
+                    Next <i class="bi bi-chevron-right"></i>
+                  </button>
+                </div>
+                <div class="pagination-size">
+                  <label>Show</label>
+                  <select>
+                    <option>10</option>
+                    <option selected>20</option>
+                    <option>50</option>
+                  </select>
+                  <label>per page</label>
+                </div>
+              </div>
+            </section>
+          </div>
+        </div>
+      </main>
+    </div>
+  </body>
+</html>

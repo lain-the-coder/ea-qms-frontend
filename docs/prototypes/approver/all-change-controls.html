@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>All Change Controls | QMS</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+  <link rel="stylesheet" href="global.css" />
+</head>
+<body>
+
+<div class="app-layout">
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <div class="logo">
+		  <i class="bi bi-files"></i>
+  <a href="dashboard-approver.html" style="color: inherit; text-decoration: none;"><span>EA QMS</span></a>
+		</div>
+    </div>
+
+    <div class="sidebar-body">
+      <nav>
+        <a href="dashboard-approver.html">Dashboard</a>
+        <a href="all-change-controls.html" class="active">All Change Controls</a>
+        <a href="my-change-controls-empty.html">My Change Controls</a>
+        <a href="approvals.html">Approvals</a>
+        <a href="settings-profile-enduser.html">Settings</a>
+      </nav>
+    </div>
+  </aside>
+
+  <main class="content">
+    
+    <!-- Page Header -->
+    <div class="page-header-with-action">
+      <div>
+        <h1>All Change Controls</h1>
+      </div>
+	  
+    </div>
+
+    <!-- Search and Filters -->
+    <section class="card">
+      <div class="search-filter-section">
+        
+        <!-- Search Bar -->
+        <div class="search-box">
+          <i class="bi bi-search"></i>
+          <input type="text" placeholder="Search by CC ID, title, owner, creator, or affected system" />
+        </div>
+
+        <!-- Filter Row -->
+        <div class="filter-row">
+          <div class="filter-group">
+            <label>State</label>
+            <select class="filter-select">
+              <option value="">All States</option>
+              <option>Initiated</option>
+              <option>Pending Implementation Approval</option>
+              <option>In Implementation</option>
+              <option>Pending Final Approval</option>
+              <option>Closed</option>
+            </select>
+          </div>
+
+          <div class="filter-group">
+            <label>Ownership</label>
+            <select class="filter-select">
+              <option value="">All</option>
+              <option>Created by me</option>
+              <option>Owned by me</option>
+              <option>Awaiting my approval</option>
+            </select>
+          </div>
+
+          <div class="filter-group">
+            <label>Date Range</label>
+            <select class="filter-select">
+              <option value="">All Dates</option>
+              <option>Last 7 days</option>
+              <option>Last 30 days</option>
+              <option>Last 90 days</option>
+              <option>Custom...</option>
+            </select>
+          </div>
+
+          <button class="btn-filter-clear" type="button">
+            <i class="bi bi-x-circle"></i> Clear Filters
+          </button>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- Change Controls Table -->
+    <section class="card">
+      <div class="table-container">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>
+                <span class="sortable">
+                  CC ID <i class="bi bi-chevron-down"></i>
+                </span>
+              </th>
+              <th>
+                <span class="sortable">
+                  Change Title <i class="bi bi-chevron-down"></i>
+                </span>
+              </th>
+              <th>
+                <span class="sortable">
+                  Current State <i class="bi bi-chevron-down"></i>
+                </span>
+              </th>
+              <th>
+                <span class="sortable">
+                  Change Owner <i class="bi bi-chevron-down"></i>
+                </span>
+              </th>
+              <th>
+                <span class="sortable">
+                  Created By <i class="bi bi-chevron-down"></i>
+                </span>
+              </th>
+              <th>
+                <span class="sortable">
+                  Created On <i class="bi bi-chevron-down"></i>
+                </span>
+              </th>
+              <th>
+                <span class="sortable active">
+                  Last Updated <i class="bi bi-chevron-down"></i>
+                </span>
+              </th>
+              <th>Approver</th>
+              <th class="table-actions-col">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            
+            <!-- Row 1 -->
+            <tr>
+              <td class="table-id">CC-005</td>
+              <td class="table-title">Database schema migration for customer analytics module</td>
+              <td>
+                <span class="table-badge badge-closed">Closed</span>
+              </td>
+              <td>Sarah Johnson</td>
+              <td>Sarah Johnson</td>
+              <td>22 Jan 2026, 4:50 PM</td>
+              <td>25 Jan 2026, 3:45 PM</td>
+              <td>Jane Smith</td>
+              <td class="table-actions">
+				<a href="cc-form-initated-state-approver-view.html" class="btn-icon" title="View">
+					<i class="bi bi-eye"></i>
+				</a>
+              </td>
+            </tr>
+
+            <!-- Row 2 -->
+            <tr>
+              <td class="table-id">CC-004</td>
+              <td class="table-title">API rate limiting implementation for external integrations</td>
+              <td>
+                <span class="table-badge badge-pending-final">Pending Final Approval</span>
+              </td>
+              <td>Mike Chen</td>
+              <td>Mike Chen</td>
+              <td>20 Jan 2026, 9:15 AM</td>
+              <td>24 Jan 2026, 11:20 AM</td>
+              <td>Jane Smith</td>
+              <td class="table-actions">
+				<a href="cc-form-initated-state-approver-view.html" class="btn-icon" title="View">
+					<i class="bi bi-eye"></i>
+				</a>
+              </td>
+            </tr>
+
+            <!-- Row 3 -->
+            <tr>
+              <td class="table-id">CC-003</td>
+              <td class="table-title">Security patch deployment for payment gateway SSL certificates</td>
+              <td>
+                <span class="table-badge badge-in-implementation">In Implementation</span>
+              </td>
+              <td>John Doe</td>
+              <td>John Doe</td>
+              <td>18 Jan 2026, 3:45 PM</td>
+              <td>23 Jan 2026, 9:15 AM</td>
+              <td>Jane Smith</td>
+              <td class="table-actions">
+				<a href="cc-form-initated-state-approver-view.html" class="btn-icon" title="View">
+					<i class="bi bi-eye"></i>
+				</a>
+              </td>
+            </tr>
+
+            <!-- Row 4 -->
+            <tr>
+              <td class="table-id">CC-002</td>
+              <td class="table-title">Mobile app notification service upgrade to Firebase v2</td>
+              <td>
+                <span class="table-badge badge-pending-impl">Pending Implementation Approval</span>
+              </td>
+              <td>Emily Rodriguez</td>
+              <td>Emily Rodriguez</td>
+              <td>15 Jan 2026, 11:20 AM</td>
+              <td>22 Jan 2026, 2:30 PM</td>
+              <td>Jane Smith</td>
+              <td class="table-actions">
+				<a href="cc-form-initated-state-approver-view.html" class="btn-icon" title="View">
+					<i class="bi bi-eye"></i>
+				</a>
+              </td>
+            </tr>
+
+            <!-- Row 5 -->
+            <tr>
+              <td class="table-id">CC-001</td>
+              <td class="table-title">Update kiosk payment receipt currency display (AED symbol alignment)</td>
+              <td>
+                <span class="table-badge badge-initiated">Initiated</span>
+              </td>
+              <td>John Doe</td>
+              <td>John Doe</td>
+              <td>10 Jan 2026, 12:00 PM</td>
+              <td>21 Jan 2026, 4:50 PM</td>
+              <td>Not Assigned</td>
+              <td class="table-actions">
+				<a href="cc-form-initated-state-approver-view.html" class="btn-icon" title="View">
+					<i class="bi bi-eye"></i>
+				</a>
+              </td>
+            </tr>
+
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Pagination -->
+      <div class="pagination">
+        <div class="pagination-info">
+          Showing 1–5 of 5 records
+        </div>
+        <div class="pagination-controls">
+          <button class="pagination-btn" disabled>
+            <i class="bi bi-chevron-left"></i> Previous
+          </button>
+          <button class="pagination-btn active">1</button>
+          <button class="pagination-btn" disabled>
+            Next <i class="bi bi-chevron-right"></i>
+          </button>
+        </div>
+        <div class="pagination-size">
+          <label>Show</label>
+          <select>
+            <option>10</option>
+            <option selected>20</option>
+            <option>50</option>
+          </select>
+          <label>per page</label>
+        </div>
+      </div>
+
+    </section>
+
+  </main>
+</div>
+
+</body>
+</html>

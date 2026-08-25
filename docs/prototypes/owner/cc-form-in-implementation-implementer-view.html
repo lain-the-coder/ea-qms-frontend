@@ -1,0 +1,601 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Change Control | QMS</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"
+    />
+    <link rel="stylesheet" href="global.css" />
+  </head>
+  <body>
+    <div class="app-layout">
+      <aside class="sidebar">
+        <div class="sidebar-header">
+          <div class="logo">
+            <i class="bi bi-files"></i>
+            <a href="dashboard-cc-owner.html"><span>EA QMS</span></a>
+          </div>
+        </div>
+
+        <div class="sidebar-body">
+          <nav>
+            <a href="dashboard-cc-owner.html">Dashboard</a>
+            <a href="all-change-controls.html" class="active"
+              >All Change Controls</a
+            >
+            <a href="my-change-controls.html">My Change Controls</a>
+            <a href="approvals-empty.html">Approvals</a>
+            <a href="settings-profile-enduser.html">Settings</a>
+          </nav>
+        </div>
+      </aside>
+
+      <main class="content">
+        <header class="page-header">
+          <h1>Change Control: CC-001</h1>
+          <span class="status-badge initiated">In Implementation</span>
+        </header>
+
+        <div class="info-banner">
+          <strong>Implementation in progress</strong><br />
+          This change has been approved for implementation. Complete the
+          implementation details below and attach supporting evidence (e.g.,
+          logs, screenshots, test results). When ready, submit for Final
+          Approval.
+        </div>
+
+        <!-- ================== Change Details ================== -->
+        <section class="card">
+          <h2>Change Details</h2>
+
+          <h3 class="section-subtitle">Identification</h3>
+          <div class="meta-grid">
+            <div class="meta-item">
+              <label>CC ID</label>
+              <div class="meta-value">CC-001</div>
+            </div>
+            <div class="meta-item">
+              <label>Current State</label>
+              <div class="meta-value">In Implementation</div>
+            </div>
+            <div class="meta-item">
+              <label>Change Owner</label>
+              <div class="meta-value">John Doe</div>
+            </div>
+            <div class="meta-item">
+              <label>Last Updated By</label>
+              <div class="meta-value">Jane Smith</div>
+            </div>
+            <div class="meta-item">
+              <label>Created On</label>
+              <div class="meta-value">25 Jan 2026, 11:33 AM</div>
+            </div>
+            <div class="meta-item">
+              <label>Last Updated On</label>
+              <div class="meta-value">26 Jan 2026, 4:00 PM</div>
+            </div>
+          </div>
+
+          <h3 class="section-subtitle">Change Definition</h3>
+
+          <div class="form-group">
+            <label>Change Title *</label>
+            <input
+              type="text"
+              class="form-control"
+              disabled
+              value="Update kiosk payment receipt currency display (AED symbol alignment)"
+            />
+          </div>
+
+          <div class="form-group">
+            <label>Change Description *</label>
+            <textarea class="form-control" rows="4" disabled>
+Update the kiosk receipt layout to display the AED symbol consistently across payment summary screens. Scope includes UI template updates and formatting logic. Excludes any payment calculation or backend changes.</textarea
+            >
+          </div>
+
+          <div class="grid-3">
+            <div class="form-group">
+              <label>Change Type *</label>
+              <select class="form-control" disabled>
+                <option>Application</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label>Change Category *</label>
+              <select class="form-control" disabled>
+                <option>Normal</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label>Department / Function *</label>
+              <select class="form-control" disabled>
+                <option>IT</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label>Affected Systems / Modules *</label>
+            <input
+              type="text"
+              class="form-control"
+              disabled
+              value="Kiosk App, Payment Summary Screen, Receipt Template (Prod)"
+            />
+          </div>
+
+          <h3 class="section-subtitle">Planning</h3>
+
+          <div class="grid-2">
+            <div class="form-group">
+              <label>Proposed Implementation Date *</label>
+              <input
+                type="date"
+                class="form-control"
+                disabled
+                value="2026-01-28"
+              />
+            </div>
+
+            <div class="form-group">
+              <label>Target Closure Date *</label>
+              <input
+                type="date"
+                class="form-control"
+                disabled
+                value="2026-02-15"
+              />
+            </div>
+          </div>
+
+          <div class="grid-2">
+            <div class="form-group">
+              <label>Implementation Window Start</label>
+              <input type="time" class="form-control" disabled value="02:00" />
+              <div class="field-hint">
+                Optional (recommended for IT changes)
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label>Implementation Window End</label>
+              <input type="time" class="form-control" disabled value="04:00" />
+              <div class="field-hint">
+                Optional (recommended for IT changes)
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ================== Impact & Risk ================== -->
+        <section class="card">
+          <h2>Impact & Risk Assessment</h2>
+
+          <div class="form-group">
+            <label>Reason for Change *</label>
+            <textarea class="form-control" rows="3" disabled>
+Improve user clarity and reduce payment-related support tickets caused by inconsistent currency display across modules.</textarea
+            >
+          </div>
+
+          <div class="form-group">
+            <label>Business Impact *</label>
+            <textarea class="form-control" rows="3" disabled>
+User-visible UI change on payment/receipt screens. No service interruption expected. Minor risk of layout regression if not tested on kiosk resolution.</textarea
+            >
+          </div>
+
+          <div class="grid-3">
+            <div class="form-group">
+              <label>Expected Downtime? *</label>
+              <select class="form-control" disabled>
+                <option>No</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label>Requires Testing? *</label>
+              <select class="form-control" disabled>
+                <option>Yes – Partial testing</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label>Requires Training? *</label>
+              <select class="form-control" disabled>
+                <option>Not applicable</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label>Risk Rationale *</label>
+            <textarea class="form-control" rows="3" disabled>
+Low risk because the change is limited to UI formatting. Risk mainly relates to display regression on specific kiosk resolutions and printer output formatting.</textarea
+            >
+          </div>
+
+          <div class="form-group">
+            <label>Key Risks & Mitigations *</label>
+            <textarea class="form-control" rows="3" disabled>
+Risk: Receipt layout misalignment on kiosk resolution → Mitigation: Validate on 1080p kiosk screen + print test before go-live. Risk: Incorrect currency symbol rendering in Arabic locale → Mitigation: Test EN/AR language toggle and verify receipt output.</textarea
+            >
+          </div>
+        </section>
+
+        <!-- ================== Implementation Plan & Validation ================== -->
+        <section class="card">
+          <h2>Implementation Plan & Validation</h2>
+
+          <div class="form-group">
+            <label>High-Level Implementation Plan *</label>
+            <textarea class="form-control" rows="5" disabled>
+1) Update receipt template UI to render AED symbol using the standard receipt component.
+2) Deploy changes to QA environment and validate kiosk UI + print output.
+3) Schedule implementation window and deploy to production kiosk package.
+4) Post-deploy smoke test on one kiosk, then roll out to remaining kiosks.</textarea
+            >
+          </div>
+
+          <div class="form-group">
+            <label>Validation Approach *</label>
+            <textarea class="form-control" rows="3" disabled>
+Perform smoke testing on payment summary screen (cash/card), verify receipt preview, print a sample receipt, and validate EN/AR locale rendering.</textarea
+            >
+          </div>
+
+          <div class="form-group">
+            <label>Success Criteria *</label>
+            <textarea class="form-control" rows="2" disabled>
+AED symbol and amounts display consistently across payment summary and printed receipts in both EN and AR without layout issues.</textarea
+            >
+          </div>
+
+          <div class="form-group">
+            <label>Rollback / Backout Plan *</label>
+            <textarea class="form-control" rows="3" disabled>
+Revert to previous kiosk package build and redeploy. Restore prior receipt template version from release tag. Confirm payment screens render normally post-rollback.</textarea
+            >
+          </div>
+        </section>
+
+        <!-- ================== Implementation Details ================== -->
+        <section class="card">
+          <h2>Implementation Details</h2>
+          <div class="section-note">
+            Complete the implementation details below and attach supporting
+            evidence before submitting for final approval.
+          </div>
+
+          <div class="grid-2">
+            <div class="form-group">
+              <label>Actual Implementation Date *</label>
+              <input
+                type="date"
+                class="form-control"
+                placeholder="Select actual implementation date"
+              />
+            </div>
+
+            <div class="form-group">
+              <label>Post-Implementation Issues *</label>
+              <select class="form-control">
+                <option value="">Select</option>
+                <option>None</option>
+                <option>Minor issues resolved</option>
+                <option>Issues requiring follow-up</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label>Implementation Summary *</label>
+            <textarea
+              class="form-control"
+              rows="4"
+              placeholder="Describe what was implemented, timeline, and key activities performed"
+            ></textarea>
+          </div>
+
+          <div class="form-group">
+            <label>Deviations from Plan</label>
+            <textarea
+              class="form-control"
+              rows="3"
+              placeholder="Document any deviations from the approved plan. If none, state 'No deviations'"
+            ></textarea>
+          </div>
+
+          <div class="form-group">
+            <label>Validation Performed *</label>
+            <textarea
+              class="form-control"
+              rows="3"
+              placeholder="Describe validation activities completed and results"
+            ></textarea>
+          </div>
+
+          <div class="form-group">
+            <label>Implementation Evidence *</label>
+            <div class="upload-box">
+              Click to upload or drag and drop files<br />
+              PDF (Max 10MB)
+            </div>
+            <div class="field-hint">
+              Upload logs, screenshots, test results, or other supporting
+              evidence
+            </div>
+          </div>
+        </section>
+
+        <!-- ================== Approvals ================== -->
+        <section class="card">
+          <h2>Approvals</h2>
+
+          <h3 class="section-subtitle">Initiation</h3>
+          <div class="form-group">
+            <label>Assign Approver *</label>
+            <select class="form-control" disabled>
+              <option>Jane Smith</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label>Comments for Approver</label>
+            <textarea class="form-control" rows="3" disabled>
+Please review for implementation approval. Change is UI-only; testing planned in QA before rollout.</textarea
+            >
+          </div>
+
+          <h3 class="section-subtitle">Implementation Approval</h3>
+
+          <div class="grid-2">
+            <div class="form-group">
+              <label>Decision *</label>
+              <select class="form-control" disabled>
+                <option>Approve</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label>Risk Level *</label>
+              <select class="form-control" disabled>
+                <option>Medium</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label>Decision Comments *</label>
+            <textarea class="form-control" rows="3" disabled>
+Approved for implementation. Ensure QA smoke testing and attach evidence before final submission.</textarea
+            >
+          </div>
+
+          <div class="grid-2">
+            <div class="form-group">
+              <label>Implementation Approval By</label>
+              <div class="meta-value">Jane Smith</div>
+            </div>
+
+            <div class="form-group">
+              <label>Implementation Approval On</label>
+              <div class="meta-value">26 Jan 2026, 4:00 PM</div>
+            </div>
+          </div>
+
+          <h3 class="section-subtitle">Final Approval</h3>
+
+          <div class="form-group">
+            <label>Final Decision</label>
+            <div class="field-na">Not applicable – Pending submission</div>
+          </div>
+
+          <div class="form-group">
+            <label>Final Comments</label>
+            <div class="field-na">Not applicable – Pending submission</div>
+          </div>
+
+          <div class="grid-2">
+            <div class="form-group">
+              <label>Final Approval By</label>
+              <div class="field-na">—</div>
+            </div>
+
+            <div class="form-group">
+              <label>Final Approval On</label>
+              <div class="field-na">—</div>
+            </div>
+          </div>
+
+          <h3 class="section-subtitle">Status</h3>
+          <div class="grid-2">
+            <div class="form-group">
+              <label>Implementation Approval Status</label>
+              <div class="meta-value">Approved</div>
+            </div>
+            <div class="form-group">
+              <label>Final Approval Status</label>
+              <div class="meta-value">Not Submitted</div>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Actual Closure Date</label>
+            <div class="meta-value">—</div>
+            <div class="field-hint">System-captured when CC is closed</div>
+          </div>
+        </section>
+
+        <!-- ================== Additional Information ================== -->
+        <section class="card">
+          <h2>Additional Information</h2>
+          <textarea class="form-control" rows="4" disabled>
+No backend changes. No DB changes. UI-only update with kiosk validation planned.</textarea
+          >
+        </section>
+
+        <!-- ================== Signature History ================== -->
+        <section class="card">
+          <h2>Signature History</h2>
+          <div class="section-note">
+            Electronic signatures applied to this Change Control. Read-only —
+            signature records cannot be modified or deleted.
+          </div>
+
+          <table class="signature-table">
+            <thead>
+              <tr>
+                <th>Signer</th>
+                <th>Date &amp; Time</th>
+                <th>Meaning of Signature</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="signature-signer">John Doe</td>
+                <td>25 Jan 2026, 11:45 AM</td>
+                <td>
+                  <span class="signature-meaning submitted"
+                    >Submitted for Implementation Approval</span
+                  >
+                </td>
+              </tr>
+              <tr>
+                <td class="signature-signer">Jane Smith</td>
+                <td>26 Jan 2026, 4:00 PM</td>
+                <td>
+                  <span class="signature-meaning approved"
+                    >Approved - Implementation Approval</span
+                  >
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <!-- ================== Actions ================== -->
+        <div class="form-actions">
+          <div class="actions-left">
+            <a href="all-change-controls.html" class="btn secondary">
+              <i class="bi bi-arrow-left"></i> Back to List
+            </a>
+          </div>
+
+          <div class="actions-right">
+            <a href="my-change-controls.html" class="btn secondary">
+              <i class="bi bi-save"></i> Save Draft
+            </a>
+
+            <button
+              onclick="
+                showEsigModal(
+                  'Submitted for Final Approval',
+                  'cc-form-pending-final-approval-implementer-view.html',
+                )
+              "
+              class="btn primary"
+            >
+              <i class="bi bi-send"></i> Submit for Final Approval
+            </button>
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <!-- ================== E-Signature Modal ================== -->
+    <div class="modal" id="esigModal">
+      <div class="modal-content">
+        <h3><i class="bi bi-pen"></i> Electronic Signature Required</h3>
+        <p class="modal-subtitle">
+          Enter your credentials to sign this action. Your signature will be
+          permanently recorded and cannot be removed.
+        </p>
+
+        <div class="esig-meaning">
+          <div class="esig-meaning-label">You are signing as</div>
+          <div class="esig-meaning-value" id="esigMeaning">—</div>
+        </div>
+
+        <div class="esig-error" id="esigError">
+          <i class="bi bi-exclamation-triangle"></i> Invalid credentials.
+          Signature not applied and no changes were made.
+        </div>
+
+        <div class="form-group">
+          <label>Email *</label>
+          <input
+            type="text"
+            class="form-control"
+            id="esigUsername"
+            placeholder="Enter your email"
+            autocomplete="off"
+          />
+        </div>
+
+        <div class="form-group">
+          <label>Password *</label>
+          <input
+            type="password"
+            class="form-control"
+            id="esigPassword"
+            placeholder="Enter your password"
+            autocomplete="off"
+          />
+        </div>
+
+        <div class="field-hint">
+          You may only sign as yourself. Signing on behalf of another user is
+          prohibited.
+        </div>
+
+        <div class="modal-actions">
+          <button onclick="hideEsigModal()" class="btn secondary">
+            <i class="bi bi-arrow-left"></i> Back
+          </button>
+          <button onclick="confirmEsig()" class="btn primary">
+            <i class="bi bi-pen"></i> Sign and Submit
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      let esigTarget = null;
+
+      function showEsigModal(meaning, target) {
+        document.getElementById("esigMeaning").textContent = meaning;
+        document.getElementById("esigError").classList.remove("show");
+        document.getElementById("esigUsername").value = "";
+        document.getElementById("esigPassword").value = "";
+        esigTarget = target;
+        document.getElementById("esigModal").classList.add("open");
+      }
+
+      function hideEsigModal() {
+        document.getElementById("esigModal").classList.remove("open");
+      }
+
+      function confirmEsig() {
+        // Prototype only. The real implementation validates credentials server-side
+        // and enforces identity binding (BR-8.8.3) — the username must match the
+        // logged-in user. A failed attempt is written to the audit trail and the
+        // record does NOT transition.
+        const user = document.getElementById("esigUsername").value.trim();
+        const pass = document.getElementById("esigPassword").value.trim();
+
+        if (!user || !pass) {
+          document.getElementById("esigError").classList.add("show");
+          return;
+        }
+        window.location.href = esigTarget;
+      }
+    </script>
+  </body>
+</html>

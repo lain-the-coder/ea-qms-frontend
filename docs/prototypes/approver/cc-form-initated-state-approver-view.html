@@ -1,0 +1,460 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Change Control | QMS</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"
+    />
+    <link rel="stylesheet" href="global.css" />
+  </head>
+  <body>
+    <div class="app-layout">
+      <aside class="sidebar">
+        <div class="sidebar-header">
+          <div class="logo">
+            <i class="bi bi-files"></i>
+            <a href="dashboard-approver.html"><span>EA QMS</span></a>
+          </div>
+        </div>
+
+        <div class="sidebar-body">
+          <nav>
+            <a href="dashboard-approver.html">Dashboard</a>
+            <a href="all-change-controls.html" class="active"
+              >All Change Controls</a
+            >
+            <a href="my-change-controls-empty.html">My Change Controls</a>
+            <a href="approvals.html">Approvals</a>
+            <a href="settings-profile-enduser.html">Settings</a>
+          </nav>
+        </div>
+      </aside>
+
+      <main class="content">
+        <header class="page-header">
+          <h1>Change Control: CC-001</h1>
+          <span class="status-badge initiated">Initiated</span>
+        </header>
+
+        <div class="info-banner">
+          <strong>Draft in progress</strong><br />
+          The change owner is preparing this change request. You will be
+          notified when it is submitted for your review.
+        </div>
+
+        <!-- ================== Change Details ================== -->
+        <section class="card">
+          <h2>Change Details</h2>
+
+          <h3 class="section-subtitle">Identification</h3>
+          <div class="meta-grid">
+            <div class="meta-item">
+              <label>CC ID</label>
+              <div class="meta-value">CC-001</div>
+            </div>
+            <div class="meta-item">
+              <label>Current State</label>
+              <div class="meta-value">Initiated</div>
+            </div>
+            <div class="meta-item">
+              <label>Change Owner</label>
+              <div class="meta-value">John Doe</div>
+            </div>
+            <div class="meta-item">
+              <label>Last Updated By</label>
+              <div class="meta-value">John Doe</div>
+            </div>
+            <div class="meta-item">
+              <label>Created On</label>
+              <div class="meta-value">25 Jan 2026, 11:33 AM</div>
+            </div>
+            <div class="meta-item">
+              <label>Last Updated On</label>
+              <div class="meta-value">25 Jan 2026, 11:33 AM</div>
+            </div>
+          </div>
+
+          <h3 class="section-subtitle">Change Definition</h3>
+
+          <div class="form-group">
+            <label>Change Title *</label>
+            <input
+              type="text"
+              class="form-control"
+              disabled
+              value="Update kiosk payment receipt currency display (AED symbol alignment)"
+            />
+          </div>
+
+          <div class="form-group">
+            <label>Change Description *</label>
+            <textarea class="form-control" rows="4" disabled>
+Update the kiosk receipt layout to display the AED symbol consistently across payment summary screens. Scope includes UI template updates and formatting logic. Excludes any payment calculation or backend changes.</textarea
+            >
+          </div>
+
+          <div class="grid-3">
+            <div class="form-group">
+              <label>Change Type *</label>
+              <select class="form-control" disabled>
+                <option>Application</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label>Change Category *</label>
+              <select class="form-control" disabled>
+                <option>Normal</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label>Department / Function *</label>
+              <select class="form-control" disabled>
+                <option>IT</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label>Affected Systems / Modules *</label>
+            <input
+              type="text"
+              class="form-control"
+              disabled
+              value="Kiosk App, Payment Summary Screen, Receipt Template (Prod)"
+            />
+          </div>
+
+          <h3 class="section-subtitle">Planning</h3>
+
+          <div class="grid-2">
+            <div class="form-group">
+              <label>Proposed Implementation Date *</label>
+              <input
+                type="date"
+                class="form-control"
+                disabled
+                value="2026-01-28"
+              />
+            </div>
+
+            <div class="form-group">
+              <label>Target Closure Date *</label>
+              <input
+                type="date"
+                class="form-control"
+                disabled
+                value="2026-02-15"
+              />
+              <div class="field-hint">
+                Date by which this change should be fully closed (minimum 10
+                business days from now)
+              </div>
+            </div>
+          </div>
+
+          <div class="grid-2">
+            <div class="form-group">
+              <label>Implementation Window Start</label>
+              <input type="time" class="form-control" disabled value="02:00" />
+              <div class="field-hint">
+                Optional (recommended for IT changes)
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label>Implementation Window End</label>
+              <input type="time" class="form-control" disabled value="04:00" />
+              <div class="field-hint">
+                Optional (recommended for IT changes)
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ================== Impact & Risk ================== -->
+        <section class="card">
+          <h2>Impact & Risk Assessment</h2>
+
+          <div class="form-group">
+            <label>Reason for Change *</label>
+            <textarea class="form-control" rows="3" disabled>
+Improve user clarity and reduce payment-related support tickets caused by inconsistent currency display across modules.</textarea
+            >
+          </div>
+
+          <div class="form-group">
+            <label>Business Impact *</label>
+            <textarea class="form-control" rows="3" disabled>
+User-visible UI change on payment/receipt screens. No service interruption expected. Minor risk of layout regression if not tested on kiosk resolution.</textarea
+            >
+          </div>
+
+          <div class="grid-3">
+            <div class="form-group">
+              <label>Expected Downtime? *</label>
+              <select class="form-control" disabled>
+                <option>No</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label>Requires Testing? *</label>
+              <select class="form-control" disabled>
+                <option>Yes – Partial testing</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label>Requires Training? *</label>
+              <select class="form-control" disabled>
+                <option>Not applicable</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label>Risk Rationale *</label>
+            <textarea class="form-control" rows="3" disabled>
+Low risk because the change is limited to UI formatting. Risk mainly relates to display regression on specific kiosk resolutions and printer output formatting.</textarea
+            >
+          </div>
+
+          <div class="form-group">
+            <label>Key Risks & Mitigations *</label>
+            <textarea class="form-control" rows="3" disabled>
+Risk: Receipt layout misalignment on kiosk resolution → Mitigation: Validate on 1080p kiosk screen + print test before go-live. Risk: Incorrect currency symbol rendering in Arabic locale → Mitigation: Test EN/AR language toggle and verify receipt output.</textarea
+            >
+          </div>
+        </section>
+
+        <!-- ================== Implementation Plan & Validation ================== -->
+        <section class="card">
+          <h2>Implementation Plan & Validation</h2>
+
+          <div class="form-group">
+            <label>High-Level Implementation Plan *</label>
+            <textarea class="form-control" rows="5" disabled>
+1) Update receipt template UI to render AED symbol using the standard receipt component.
+2) Deploy changes to QA environment and validate kiosk UI + print output.
+3) Schedule implementation window and deploy to production kiosk package.
+4) Post-deploy smoke test on one kiosk, then roll out to remaining kiosks.</textarea
+            >
+          </div>
+
+          <div class="form-group">
+            <label>Validation Approach *</label>
+            <textarea class="form-control" rows="3" disabled>
+Perform smoke testing on payment summary screen (cash/card), verify receipt preview, print a sample receipt, and validate EN/AR locale rendering.</textarea
+            >
+          </div>
+
+          <div class="form-group">
+            <label>Success Criteria *</label>
+            <textarea class="form-control" rows="2" disabled>
+AED symbol and amounts display consistently across payment summary and printed receipts in both EN and AR without layout issues.</textarea
+            >
+          </div>
+
+          <div class="form-group">
+            <label>Rollback / Backout Plan *</label>
+            <textarea class="form-control" rows="3" disabled>
+Revert to previous kiosk package build and redeploy. Restore prior receipt template version from release tag. Confirm payment screens render normally post-rollback.</textarea
+            >
+          </div>
+        </section>
+
+        <!-- ================== Implementation Details ================== -->
+        <section class="card">
+          <h2>Implementation Details</h2>
+          <div class="section-note">
+            These fields will become available once the change is approved for
+            implementation.
+          </div>
+
+          <div class="grid-2">
+            <div class="form-group">
+              <label>Actual Implementation Date</label>
+              <div class="field-na">
+                Not applicable – Available after approval
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label>Post-Implementation Issues</label>
+              <div class="field-na">
+                Not applicable – Available after approval
+              </div>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label>Implementation Summary</label>
+            <div class="field-na">
+              Not applicable – Available after approval
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label>Deviations from Plan</label>
+            <div class="field-na">
+              Not applicable – Available after approval
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label>Validation Performed</label>
+            <div class="field-na">
+              Not applicable – Available after approval
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label>Implementation Evidence</label>
+            <div class="field-na">
+              Not applicable – Available after approval
+            </div>
+          </div>
+        </section>
+
+        <!-- ================== Approvals ================== -->
+        <section class="card">
+          <h2>Approvals</h2>
+
+          <h3 class="section-subtitle">Initiation</h3>
+          <div class="form-group">
+            <label>Assign Approver *</label>
+            <select class="form-control" disabled>
+              <option>Jane Smith</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label>Comments for Approver</label>
+            <textarea class="form-control" rows="3" disabled>
+Please review for implementation approval. Change is UI-only; testing planned in QA before rollout.</textarea
+            >
+          </div>
+
+          <h3 class="section-subtitle">Implementation Approval</h3>
+
+          <div class="grid-2">
+            <div class="form-group">
+              <label>Decision</label>
+              <div class="field-na">Not applicable – Pending submission</div>
+            </div>
+
+            <div class="form-group">
+              <label>Risk Level</label>
+              <div class="field-na">
+                Not applicable – Will be set by approver during review
+              </div>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label>Decision Comments</label>
+            <div class="field-na">Not applicable – Pending submission</div>
+          </div>
+
+          <div class="grid-2">
+            <div class="form-group">
+              <label>Implementation Approval By</label>
+              <div class="field-na">—</div>
+            </div>
+
+            <div class="form-group">
+              <label>Implementation Approval On</label>
+              <div class="field-na">—</div>
+            </div>
+          </div>
+
+          <h3 class="section-subtitle">Final Approval</h3>
+
+          <div class="form-group">
+            <label>Final Decision</label>
+            <div class="field-na">Not applicable – Pending implementation</div>
+          </div>
+
+          <div class="form-group">
+            <label>Final Comments</label>
+            <div class="field-na">Not applicable – Pending implementation</div>
+          </div>
+
+          <div class="grid-2">
+            <div class="form-group">
+              <label>Final Approval By</label>
+              <div class="field-na">—</div>
+            </div>
+
+            <div class="form-group">
+              <label>Final Approval On</label>
+              <div class="field-na">—</div>
+            </div>
+          </div>
+
+          <h3 class="section-subtitle">Status</h3>
+          <div class="grid-2">
+            <div class="form-group">
+              <label>Implementation Approval Status</label>
+              <div class="meta-value">Not Submitted</div>
+            </div>
+            <div class="form-group">
+              <label>Final Approval Status</label>
+              <div class="meta-value">Not Submitted</div>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label>Actual Closure Date</label>
+            <div class="meta-value">—</div>
+            <div class="field-hint">System-captured when CC is closed</div>
+          </div>
+        </section>
+
+        <!-- ================== Additional Information ================== -->
+        <section class="card">
+          <h2>Additional Information</h2>
+          <div class="form-group">
+            <label>Comments</label>
+            <textarea class="form-control" rows="4" disabled>
+No backend changes. No DB changes. UI-only update with kiosk validation planned.</textarea
+            >
+          </div>
+        </section>
+        <!-- ================== Signature History ================== -->
+        <section class="card">
+          <h2>Signature History</h2>
+          <div class="signature-empty">
+            <i class="bi bi-pen"></i><br />
+            No signatures yet.<br />
+            A signature will be captured when the change owner submits or
+            cancels this Change Control.
+          </div>
+        </section>
+
+        <!-- ================== Actions ================== -->
+        <div class="form-actions">
+          <div class="actions-left">
+            <a href="all-change-controls.html" class="btn secondary">
+              <i class="bi bi-arrow-left"></i> Back to List
+            </a>
+          </div>
+
+          <div class="actions-right">
+            <a
+              href="cc-form-pending-implementation-approval-approver-view.html"
+            >
+              <i class="bi bi-clock-history"></i> Awaiting submission from John
+              Doe
+            </a>
+          </div>
+        </div>
+      </main>
+    </div>
+  </body>
+</html>

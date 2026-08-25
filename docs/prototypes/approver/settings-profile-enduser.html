@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Settings | QMS</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"
+    />
+    <link rel="stylesheet" href="global.css" />
+  </head>
+  <body>
+    <div class="app-layout">
+      <aside class="sidebar">
+        <div class="sidebar-header">
+          <div class="logo">
+            <i class="bi bi-files"></i>
+            <a
+              href="dashboard-approver.html"
+              style="color: inherit; text-decoration: none"
+              ><span>EA QMS</span></a
+            >
+          </div>
+        </div>
+        <div class="sidebar-body">
+          <nav>
+            <a href="dashboard-approver.html">Dashboard</a>
+            <a href="all-change-controls.html">All Change Controls</a>
+            <a href="my-change-controls-empty.html">My Change Controls</a>
+            <a href="approvals.html">Approvals</a>
+            <a href="settings-profile-enduser.html" class="active">Settings</a>
+          </nav>
+        </div>
+      </aside>
+
+      <main class="content">
+        <div class="page-header-with-action">
+          <div>
+            <h1>Settings</h1>
+          </div>
+        </div>
+
+        <div class="settings-layout">
+          <nav class="settings-nav">
+            <a href="settings-profile-enduser.html" class="active">
+              <i class="bi bi-person-circle"></i> Profile
+            </a>
+          </nav>
+
+          <div class="settings-content">
+            <!-- Account Info -->
+            <section class="card">
+              <div class="profile-header">
+                <div class="profile-avatar">JD</div>
+                <div class="profile-header-info">
+                  <h3>John Doe</h3>
+                  <p>End User &nbsp;·&nbsp; john.doe@eami.ae</p>
+                </div>
+              </div>
+
+              <p class="profile-section-label">Account Details</p>
+
+              <div class="grid-2">
+                <div class="form-group">
+                  <label>Full Name</label>
+                  <input
+                    type="text"
+                    class="form-control"
+                    value="John Doe"
+                    disabled
+                  />
+                </div>
+                <div class="form-group">
+                  <label>Email Address</label>
+                  <input
+                    type="email"
+                    class="form-control"
+                    value="john.doe@eami.ae"
+                    disabled
+                  />
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label>Role</label>
+                <input
+                  type="text"
+                  class="form-control"
+                  value="Approver"
+                  disabled
+                />
+              </div>
+            </section>
+
+            <!-- Session -->
+            <section class="card">
+              <h2 style="margin-top: 0">Session</h2>
+              <p
+                style="
+                  font-size: var(--font-size-sm);
+                  color: var(--color-text-secondary);
+                  margin: 0 0 var(--spacing-lg) 0;
+                "
+              >
+                Signing out will end your current session.
+              </p>
+              <a href="login.html" class="logout-btn">
+                <i class="bi bi-box-arrow-right"></i> Sign Out
+              </a>
+            </section>
+          </div>
+        </div>
+      </main>
+    </div>
+  </body>
+</html>

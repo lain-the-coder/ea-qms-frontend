@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Dashboard | QMS</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+  <link rel="stylesheet" href="global.css" />
+</head>
+<body>
+
+<div class="app-layout">
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <div class="logo">
+		  <i class="bi bi-files"></i>
+  <a href="dashboard-empty.html"><span>EA QMS</span></a>
+      </div>
+    </div>
+
+    <div class="sidebar-body">
+      <nav>
+        <a href="dashboard-empty.html" class="active">Dashboard</a>
+        <a href="all-change-controls.html">All Change Controls</a>
+        <a href="my-change-controls-empty.html">My Change Controls</a>
+        <a href="approvals-empty.html">Approvals</a>
+        <a href="settings-admin.html">Settings</a>
+      </nav>
+    </div>
+  </aside>
+
+  <main class="content">
+    
+    <!-- Page Header -->
+    <div class="page-header-with-action">
+      <div>
+        <h1>Dashboard</h1>
+        <p class="page-subtitle">Welcome back, Jane Smith</p>
+      </div>
+    </div>
+
+    <!-- Action Required Section -->
+    <section class="dashboard-section">
+      <h2 class="dashboard-section-title">
+        <i class="bi bi-exclamation-circle"></i> Action Required
+      </h2>
+      
+      <div class="dashboard-grid-2">
+        <!-- Pending Approvals Card - EMPTY STATE -->
+        <div class="dashboard-card card-highlight">
+          <div class="dashboard-card-header">
+            <div>
+              <h3>Pending Approvals</h3>
+              <p class="dashboard-card-subtitle">Changes awaiting your decision</p>
+            </div>
+            <span class="dashboard-stat-number">0</span>
+          </div>
+          <div class="dashboard-card-body">
+            <div class="dashboard-empty-state">
+              <i class="bi bi-check-circle"></i>
+              <p>No pending approvals</p>
+            </div>
+          </div>
+          <div class="dashboard-card-footer">
+            <a href="approvals-empty.html" class="dashboard-link">View All Approvals <i class="bi bi-arrow-right"></i></a>
+          </div>
+        </div>
+
+        <!-- My Drafts Card - EMPTY STATE -->
+        <div class="dashboard-card card-highlight">
+          <div class="dashboard-card-header">
+            <div>
+              <h3>My Drafts</h3>
+              <p class="dashboard-card-subtitle">Initiated but not submitted</p>
+            </div>
+            <span class="dashboard-stat-number">0</span>
+          </div>
+          <div class="dashboard-card-body">
+            <div class="dashboard-empty-state">
+              <i class="bi bi-inbox"></i>
+              <p>No drafts yet</p>
+            </div>
+          </div>
+          <div class="dashboard-card-footer">
+            <a href="my-change-controls-empty.html" class="dashboard-link">View My Change Controls <i class="bi bi-arrow-right"></i></a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Overview Section - ALWAYS SHOWS (System-wide stats) -->
+    <section class="dashboard-section">
+      <h2 class="dashboard-section-title">
+        <i class="bi bi-bar-chart"></i> Overview
+      </h2>
+      
+      <div class="dashboard-grid-5">
+        <!-- Stat Card: Initiated -->
+        <a href="all-change-controls.html" class="stat-card">
+          <div class="stat-icon" style="background: var(--color-status-initiated-bg); color: var(--color-status-initiated-text);">
+            <i class="bi bi-file-earmark-text"></i>
+          </div>
+          <div class="stat-content">
+            <div class="stat-number">3</div>
+            <div class="stat-label">Initiated</div>
+          </div>
+        </a>
+
+        <!-- Stat Card: Pending Approval -->
+        <a href="all-change-controls.html" class="stat-card">
+          <div class="stat-icon" style="background: var(--color-status-pending-impl-bg); color: var(--color-status-pending-impl-text);">
+            <i class="bi bi-clock-history"></i>
+          </div>
+          <div class="stat-content">
+            <div class="stat-number">5</div>
+            <div class="stat-label">Pending Approval</div>
+          </div>
+        </a>
+
+        <!-- Stat Card: In Implementation -->
+        <a href="all-change-controls.html" class="stat-card">
+          <div class="stat-icon" style="background: var(--color-status-in-impl-bg); color: var(--color-status-in-impl-text);">
+            <i class="bi bi-gear"></i>
+          </div>
+          <div class="stat-content">
+            <div class="stat-number">2</div>
+            <div class="stat-label">In Implementation</div>
+          </div>
+        </a>
+
+        <!-- Stat Card: Pending Final -->
+        <a href="all-change-controls.html" class="stat-card">
+          <div class="stat-icon" style="background: var(--color-status-pending-final-bg); color: var(--color-status-pending-final-text);">
+            <i class="bi bi-hourglass-split"></i>
+          </div>
+          <div class="stat-content">
+            <div class="stat-number">1</div>
+            <div class="stat-label">Pending Final</div>
+          </div>
+        </a>
+
+        <!-- Stat Card: Closed -->
+        <a href="all-change-controls.html" class="stat-card">
+          <div class="stat-icon" style="background: var(--color-status-closed-bg); color: var(--color-status-closed-text);">
+            <i class="bi bi-check-circle"></i>
+          </div>
+          <div class="stat-content">
+            <div class="stat-number">24</div>
+            <div class="stat-label">Closed</div>
+          </div>
+        </a>
+      </div>
+    </section>
+
+    <!-- Recent Activity Section - EMPTY STATE -->
+    <section class="dashboard-section">
+      <h2 class="dashboard-section-title">
+        <i class="bi bi-clock"></i> Recent Activity
+      </h2>
+      
+      <div class="card">
+        <div class="empty-state">
+          <div class="empty-state-icon">
+            <i class="bi bi-clock-history"></i>
+          </div>
+          <h2 class="empty-state-title">No Recent Activity</h2>
+          <p class="empty-state-message">There hasn't been any recent activity on change controls you're involved with.</p>
+          <a href="all-change-controls.html" class="btn secondary">
+            <i class="bi bi-list-ul"></i> View All Change Controls
+          </a>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+</body>
+</html>

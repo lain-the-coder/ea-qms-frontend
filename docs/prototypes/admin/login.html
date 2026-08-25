@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Login | EA QMS</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+  <link rel="stylesheet" href="global.css" />
+</head>
+<body>
+
+<div class="login-layout">
+  
+  <!-- Left Side - Branding -->
+  <div class="login-side">
+    <div class="login-side-content">
+      <div class="login-logo">
+        <i class="bi bi-files"></i>
+        <span>EA QMS</span>
+      </div>
+      <h2>Quality Management System</h2>
+      <p>Streamline change control processes and maintain compliance with enterprise-grade quality management.</p>
+    </div>
+  </div>
+
+  <!-- Right Side - Login Form -->
+  <div class="login-main">
+    <div class="login-form-container">
+      
+      <div class="login-form-header">
+        <h1>Sign In</h1>
+        <p>Sign in to access EA QMS</p>
+      </div>
+
+      <form class="login-form" action="dashboard-empty.html" method="post">
+        <div class="form-group">
+          <label for="email">Email Address</label>
+          <input 
+            type="email" 
+            id="email" 
+            class="form-control" 
+            placeholder="name@company.com"
+            autocomplete="email"
+            required
+          />
+        </div>
+
+        <div class="form-group">
+          <label for="password">Password</label>
+          <input 
+            type="password" 
+            id="password" 
+            class="form-control" 
+            placeholder="Enter your password"
+            autocomplete="current-password"
+            required
+          />
+        </div>
+
+        <div class="login-options">
+          <label class="login-checkbox">
+            <input type="checkbox" id="remember" />
+            <span>Remember me</span>
+          </label>
+          <a href="forgot-password.html" class="login-link">Forgot password?</a>
+        </div>
+
+        <button type="submit" class="btn primary login-btn">
+          Sign In
+        </button>
+      </form>
+
+      <div class="login-footer">
+        <p>&copy; 2026 EA. All rights reserved.</p>
+      </div>
+
+    </div>
+  </div>
+
+</div>
+
+</body>
+</html>
