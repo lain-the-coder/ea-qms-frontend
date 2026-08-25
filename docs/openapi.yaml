@@ -183,7 +183,12 @@ components:
 
     ExpectedDowntime:
       type: string
-      enum: [Yes, No, Unknown]
+      description: |
+        ⚠️ **`Yes` and `No` must stay quoted.** YAML 1.1 resolves bare `Yes`,
+        `No`, `On` and `Off` to booleans, so `[Yes, No, Unknown]` loads as
+        `[true, false, "Unknown"]` and both string members disappear. The values
+        are strings; `Unknown` needs no quotes because it is not a boolean word.
+      enum: ["Yes", "No", Unknown]
 
     RequiresTesting:
       type: string
@@ -199,7 +204,8 @@ components:
 
     RequiresTraining:
       type: string
-      enum: [Yes, "No", Not applicable]
+      description: ⚠️ `Yes` and `No` must stay quoted — see `ExpectedDowntime`.
+      enum: ["Yes", "No", Not applicable]
 
     PostImplementationIssues:
       type: string
@@ -323,8 +329,32 @@ components:
 
     # ---------- users ----------
 
+    # ⚠️ The user endpoints return THREE different shapes, not one. An earlier
+    # revision of this spec merged them into a single `UserResponse` carrying
+    # both timestamps, which made `created_on` look available after a status
+    # change and `is_active` look available on `/me`. Neither is sent.
+    #
+    #   MeResponse          GET /me                      4 fields, no timestamp
+    #   UserResponse        POST /users, GET /users       + is_active, created_on
+    #   UserStatusResponse  the two PUT /users/{userID}   + is_active, updated_on
+
+    MeResponse:
+      type: object
+      description: |
+        `GET /me` only. **No `is_active` and no timestamp** — the handler builds
+        its own four-field struct. This is the shape the auth store holds.
+      properties:
+        id: { type: string, format: uuid }
+        full_name: { type: string }
+        email: { type: string, format: email }
+        role: { $ref: "#/components/schemas/Role" }
+
     UserResponse:
       type: object
+      description: |
+        A user as returned by `POST /users` and by the rows of `GET /users`.
+        Carries `created_on`; **`updated_on` is not sent here** — see
+        `UserStatusResponse`.
       properties:
         id: { type: string, format: uuid }
         full_name: { type: string }
@@ -332,6 +362,20 @@ components:
         role: { $ref: "#/components/schemas/Role" }
         is_active: { type: boolean }
         created_on: { type: string, format: date-time }
+
+    UserStatusResponse:
+      type: object
+      description: |
+        Returned by **both** `PUT /users/{userID}` and
+        `PUT /users/{userID}/active`. Carries `updated_on`; **`created_on` is
+        not sent here.** A table row refreshed from this response loses its
+        created date unless the client merges rather than replaces.
+      properties:
+        id: { type: string, format: uuid }
+        full_name: { type: string }
+        email: { type: string, format: email }
+        role: { $ref: "#/components/schemas/Role" }
+        is_active: { type: boolean }
         updated_on: { type: string, format: date-time }
 
     ApproverRef:
@@ -340,6 +384,16 @@ components:
       properties:
         id: { type: string, format: uuid }
         full_name: { type: string }
+
+    ListApproversResponse:
+      type: object
+      description: |
+        `GET /approvers`. The array is **wrapped in an object**, exactly like
+        every other list endpoint — it is not a bare JSON array.
+      properties:
+        approvers:
+          type: array
+          items: { $ref: "#/components/schemas/ApproverRef" }
 
     CreateUserRequest:
       type: object
@@ -605,14 +659,19 @@ components:
     CreateChangeControlResponse:
       type: object
       description: |
-        Deliberately minimal — the eight fields the frontend needs to render a
+        Deliberately minimal — the eleven fields the frontend needs to render a
         fresh empty form. Not the full record.
+
+        On a new record `last_updated_by_*` is the creating owner, since nobody
+        else has touched it yet.
       properties:
         id: { type: string, format: uuid }
         cc_id: { type: string, example: CC-008 }
         current_state: { $ref: "#/components/schemas/State" }
         change_owner_id: { type: string, format: uuid }
         change_owner_name: { type: string }
+        last_updated_by_id: { type: string, format: uuid }
+        last_updated_by_name: { type: string }
         implementation_approval_status:
           { $ref: "#/components/schemas/ApprovalStatus" }
         final_approval_status: { $ref: "#/components/schemas/ApprovalStatus" }
@@ -1006,10 +1065,10 @@ paths:
       summary: The current user
       responses:
         "200":
-          description: The authenticated user.
+          description: The authenticated user. Four fields — no `is_active`, no timestamp.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/UserResponse" }
+              schema: { $ref: "#/components/schemas/MeResponse" }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
   /users:
@@ -1020,9 +1079,13 @@ paths:
       parameters:
         - $ref: "#/components/parameters/limit"
         - $ref: "#/components/parameters/offset"
-        - name: is_active
+        - name: active
           in: query
-          description: Omit for all users.
+          description: |
+            ⚠️ **`active`, not `is_active`.** The response field is `is_active`
+            but the query parameter is not — the handler reads `active`, and an
+            unrecognised parameter is ignored silently, so `?is_active=true`
+            returns every user with no error. Omit for all users.
           schema: { type: boolean }
       responses:
         "200":
@@ -1086,10 +1149,12 @@ paths:
             schema: { $ref: "#/components/schemas/UpdateUserRequest" }
       responses:
         "200":
-          description: Updated. Returned unchanged if nothing differed.
+          description: |
+            Updated. Returned unchanged if nothing differed. Carries
+            `updated_on`, **not** `created_on`.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/UserResponse" }
+              schema: { $ref: "#/components/schemas/UserStatusResponse" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403":
@@ -1126,10 +1191,10 @@ paths:
             schema: { $ref: "#/components/schemas/SetUserActiveRequest" }
       responses:
         "200":
-          description: Updated.
+          description: Updated. Carries `updated_on`, **not** `created_on`.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/UserResponse" }
+              schema: { $ref: "#/components/schemas/UserStatusResponse" }
         "400":
           description: Attempting to deactivate oneself.
           content:
@@ -1158,12 +1223,7 @@ paths:
           description: Approvers, sorted by name.
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  approvers:
-                    type: array
-                    items: { $ref: "#/components/schemas/ApproverRef" }
+              schema: { $ref: "#/components/schemas/ListApproversResponse" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "500": { $ref: "#/components/responses/ServerError" }
 
