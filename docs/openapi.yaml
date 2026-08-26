@@ -112,11 +112,19 @@ components:
     limit:
       name: limit
       in: query
-      description: Page size. **Defaults to 50** — send it explicitly if the UI shows fewer.
+      description: |
+        Page size. **Defaults to 50** — send it explicitly if the UI shows fewer.
+
+        **The maximum is 200, and the server clamps rather than rejects.** A
+        `limit` above 200 returns 200 rows with `200 OK` and nothing indicating
+        the value was capped; only `limit < 1` or a non-integer is a 400. The
+        `maximum` below therefore documents the clamp point, not a validation
+        boundary — **read `limit` back off the response** rather than assuming
+        the request's value was honoured.
       schema:
         type: integer
         minimum: 1
-        maximum: 100
+        maximum: 200
         default: 50
     offset:
       name: offset
@@ -248,9 +256,20 @@ components:
       type: object
       description: |
         Returned when several things are wrong at once. **All failures are
-        collected** — the API never stops at the first. Used by the transition
-        endpoints (missing mandatory fields, failed date rules) and by the two
-        save endpoints (keys not editable in the current state).
+        collected** rather than stopping at the first.
+
+        **Four endpoints return this, not "the transitions":**
+
+        - the two save endpoints — keys not editable in the current state
+        - **T2 and T6 only** — the two *submit* transitions: missing mandatory
+          fields, failed date rules
+
+        Cancel (T3), the implementation decision (T4/T5) and the final decision
+        (T7/T8) fail on the **first** problem with a plain `ErrorResponse`.
+        That is by design: they validate a small request body the user has just
+        typed, where one message points at one field. T2 and T6 validate stored
+        state across twenty-odd fields, where stopping at the first would mean
+        twenty round trips.
       required: [error, issues]
       properties:
         error:
@@ -406,8 +425,12 @@ components:
           format: password
           description: |
             Minimum 8 characters with at least one lowercase letter, one
-            uppercase letter, one digit and one special character. All unmet
-            requirements are returned together.
+            uppercase letter, one digit and one special character.
+
+            Every unmet requirement is reported, but **joined into the single
+            `error` string** — `"Password must contain at least 1 uppercase
+            letter, at least 1 digit"`. This is a plain `ErrorResponse`;
+            **there is no `issues` array.** Render `error` as it arrives.
         role: { $ref: "#/components/schemas/Role" }
 
     UpdateUserRequest:
@@ -1031,11 +1054,23 @@ paths:
               schema: { $ref: "#/components/schemas/RefreshResponse" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401":
-          description: Unknown, revoked, expired or idle-timed-out token. Sign in again.
+          description: |
+            **Three distinct causes, and the message says which.** All three end
+            the session, but only the first two are worth offering a sign-in for.
+
+            | `error` | Cause |
+            |---|---|
+            | `Invalid refresh token` | Not found, or already revoked |
+            | `Session expired` | 24 h absolute reached, **or** 2 h idle |
+            | `Account is deactivated` | The user's `is_active` is false |
+
+            `is_active` is re-checked here and on every authenticated request, so
+            a deactivated user is stopped immediately rather than at access-token
+            expiry. Signing in again returns the same message.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
-              example: { error: Invalid or expired refresh token }
+              example: { error: Session expired }
         "500": { $ref: "#/components/responses/ServerError" }
 
   /revoke:
@@ -1044,9 +1079,18 @@ paths:
       summary: Sign out
       security: []
       description: |
-        **Idempotent** — returns 204 whether the token was valid, already
-        revoked, or never existed. Logging out should never fail, and identical
-        responses stop a prober learning whether a token is real.
+        **Idempotent across every token state** — 204 whether the token was
+        valid, already revoked, or never existed. Identical responses stop a
+        prober learning whether a token is real.
+
+        ⚠️ **A blank or missing `refresh_token` is a 400**, not a 204 — the body
+        is validated before the token is looked up. Idempotency covers what the
+        token *is*, not whether one was sent. A client with nothing in storage
+        should skip the call rather than send `""`, and should clear local state
+        regardless.
+
+        Revokes only the token in the body. **Login does not revoke prior
+        tokens**, so other sessions survive; there is no sign-out-everywhere.
       requestBody:
         required: true
         content:

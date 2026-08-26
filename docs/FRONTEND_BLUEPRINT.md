@@ -99,6 +99,16 @@ request → 401
 
 **Never loop.** One refresh, one retry, then give up.
 
+⚠️ **Exempt `/login`, `/refresh` and `/revoke` from that path.** All three are
+mounted without the auth middleware (`main.go:96-98`), take no bearer token, and
+return 401 for their *own* reasons — a wrong password, a dead refresh token.
+Applied literally to every response, the rule above turns a mistyped password
+into a refresh attempt with whatever stale token `localStorage` still holds, and
+the user is shown a logout instead of "incorrect email or password".
+
+The wrapper needs the same exemption for the bearer header: **do not attach one
+to these three.** A1.3.
+
 ### A1.3 The refresh token goes in the JSON body
 
 ```
@@ -107,11 +117,37 @@ POST /refresh   { "refresh_token": "..." }
 
 Not an `Authorization` header — it is not a bearer credential.
 
-### A1.4 Logout is idempotent
+### A1.4 Logout is idempotent — but only once a token is in the body
 
 `POST /revoke` returns **204** whether the token was valid, already revoked, or
-never existed. Logging out never fails. Clear local state regardless of the
-response.
+never existed. `RevokeRefreshToken` carries `AND revoked_at IS NULL`, so a second
+revoke updates nothing and still returns 204.
+
+⚠️ **It is not unconditionally 204.** A blank or missing `refresh_token`, or a
+malformed body, is a **400** — the handler validates the body before it ever
+reaches the database (`handlers_auth.go:120-130`). So "logging out never fails"
+holds for every *token* state and fails at the one case the client actually
+produces: **logging out when `localStorage` holds no refresh token** — already
+logged out, storage cleared, a fresh browser.
+
+The rule for the wrapper:
+
+- **Only call `/revoke` if a refresh token is present.** Skip the call otherwise.
+- **Clear local state unconditionally** — before the call, not after it, and
+  regardless of the outcome including a network failure.
+
+Local state is what logs the user out. The call is what stops the token being
+reusable elsewhere; it is not what ends the session in this tab.
+
+### A1.4a Logout ends *this* session, not every session
+
+**Login never revokes existing refresh tokens** — `HandlerLogin` inserts a new
+row each time (`handlers_auth.go:216-232`). Two browsers, or a re-login without a
+logout, leave two independent live tokens, and `/revoke` kills only the one in the
+body.
+
+There is no "sign out everywhere", and deactivating the user is the only thing
+that stops all of them at once (A1.6). Do not present logout as more than it is.
 
 ### A1.5 The inactivity popup is courtesy, not enforcement
 
@@ -120,6 +156,50 @@ prompt at ~30 minutes idle is a UX nicety: **Yes** → `POST /refresh`, **No** o
 timeout → `POST /revoke` and log out.
 
 Build it last. The system is correct without it.
+
+### A1.6 Deactivation takes effect on the next request, not in 30 minutes
+
+`middlewareAuth` re-reads the user from the database and checks `is_active` on
+**every authenticated request** (`middleware.go:69`), and `/refresh` checks it
+again independently (`handlers_auth.go:85`). A valid, unexpired access token does
+**not** keep a deactivated user working until it expires.
+
+So when an Admin deactivates someone at step 15, that user's next action —
+whatever it is — returns 401, the refresh that follows also returns 401, and they
+are logged out. That is the intended path and it needs no client-side work. What
+it does need is the *right message*: this is not an expired session.
+
+### A1.7 A 401 has three meanings, and the body says which
+
+| Body | What happened | What the user should be told |
+|---|---|---|
+| `Invalid refresh token` | Not found, or revoked | Session ended — sign in again |
+| `Session expired` | 24 h absolute reached, **or** 2 h idle | Session expired — sign in again |
+| `Account is deactivated` | `is_active = false` (A1.6) | **Your account has been deactivated** — signing in again will not help |
+
+All three end in the same place: clear the store, go to `/login`. But the third
+is not the user's fault and not fixable by retrying, so showing "your session
+expired" there sends them into a login loop against an account that will keep
+rejecting them. **Carry the message from the failed refresh into the login
+screen** rather than discarding it.
+
+`POST /login` returns the same `Account is deactivated` if they try.
+
+### A1.8 What only refresh advances
+
+**`TouchRefreshToken` is called in exactly one place** — `HandlerRefresh`, after
+validation and before the new JWT is minted (`handlers_auth.go:92`). Nothing else
+in the codebase touches it.
+
+**Ordinary API calls do not advance the sliding window.** Saving a draft for
+ninety minutes straight moves `updated_on` not at all; only the scheduled refresh
+does. This is what makes A1.2's activity gating load-bearing rather than tidy: the
+refresh is the *only* signal the server has, so gating it on real interaction is
+the entire mechanism by which an abandoned tab eventually dies.
+
+It also means the 2-hour window is measured from **the last refresh**, not the
+last request — a subtlety that matters only if the scheduled refresh is ever made
+conditional on something other than activity.
 
 ## A2. The save-then-submit contract
 
@@ -353,9 +433,23 @@ knows what they are attesting to. **ASCII hyphens** — see A4.
 }
 ```
 
-The second comes from the transitions (missing fields, failed date rules, missing
-evidence — **all collected**) and from the save endpoints (non-editable keys).
-**Render every item**, not just the first.
+The second comes from **four endpoints**, not from "the transitions":
+
+- the two save endpoints — keys not editable in the current state
+- **T2 and T6 only** — the two *submit* transitions: missing mandatory fields,
+  failed date rules, missing evidence, **all collected**
+
+**Cancel (T3), the implementation decision (T4/T5) and the final decision
+(T7/T8) return the first shape**, stopping at the first problem. That is by
+design, not an inconsistency to route around: they validate a small request body
+the user has just typed, where one message points at one field. T2 and T6
+validate stored state across twenty-odd fields, where stopping at the first would
+mean twenty round trips. Verified against the handlers — only
+`HandlerSubmitForImplApproval` and `HandlerSubmitForFinalApproval` build an
+issues array.
+
+**Render every item** when there is one, not just the first. But do not write a
+transition caller that *expects* one.
 
 ### A8.2 What each status means for the UI
 
@@ -385,20 +479,74 @@ role change is *also* rejected. Do not tell the user the name was saved.
 
 ## A9. Lists and pagination
 
-- **`limit` defaults to 50.** Send it explicitly if the UI shows fewer.
+### A9.0 Four list endpoints, and only two are paginated
+
+**Nothing below is true of all of them.** Check this table before applying any
+rule in A9.1 or A9.2 — sort order and pagination differ per endpoint, and each
+was read off the SQL, not inferred.
+
+| Endpoint | Sort | Paginated? |
+|---|---|---|
+| `GET /changecontrols` | `last_updated_on` **DESC** | **Yes** — `limit` / `offset`, plus `total` |
+| `GET /users` | `full_name` **ASC** | **Yes** — `limit` / `offset`, plus `total` |
+| `GET /approvers` | `full_name` **ASC** | **No — returns every active approver** |
+| `GET /changecontrols/{ccID}/signatures` | `signed_on` **ASC** — chronological | **No — returns the whole history** |
+
+**No endpoint has a sort parameter.** Sort is fixed in SQL in all four cases, so
+column headers are not sortable anywhere — but *what* it is fixed at differs, and
+the two user-facing lists sort in opposite directions.
+
+**`GET /approvers` and the signature list take no `limit` or `offset` at all**
+(`users.sql:29-32`, `esignatures.sql:6-10` — neither query has a `LIMIT`
+clause). Sending them is not an error; they are simply ignored. Nothing in A9.1
+applies to either — no `total`, no page count, no offset reset. The approver
+dropdown renders the whole array, and the signature panel renders the whole
+history oldest-first.
+
+### A9.1 Pagination — `GET /changecontrols` and `GET /users` only
+
+- **`limit` defaults to 50, and its ceiling is 200.** Send it explicitly if the
+  UI shows fewer.
+- ⚠️ **Above 200 the server clamps — it does not reject.** `limit=500` returns
+  200 rows with `200 OK` and nothing saying the value was capped; only `limit < 1`
+  or a non-integer is a 400. **So the limit a request asked for is not
+  necessarily the limit it got.**
 - **`offset`, not page numbers.** `offset = (page - 1) * limit`.
 - **Reset `offset` to 0 whenever a filter changes**, or the user lands on an empty
   page.
 - **`total` is the count matching the filter**, ignoring pagination — use it for
   the page count, not `items.length`.
-- **Sort is fixed** at `last_updated_on DESC`. There is no sort parameter, so
-  column headers are not sortable.
+- **Compute the page count from the `limit` in the *response*, not the one you
+  sent.** Both paginated responses echo `limit` back for exactly this reason.
+  Using the requested value makes `Math.ceil(total / limit)` silently wrong for
+  anyone who hand-edits the URL — the arithmetic is off, no error is raised
+  anywhere, and pages beyond the first are unreachable or empty.
+
+### A9.2 Filters
+
+**`GET /changecontrols`:**
+
 - **`?owner=me` and `?assigned=me`** are flags resolved server-side from the
   token. No user ID ever appears in a URL.
 - **`?state=` accepts one value.** For "either pending state", use the dashboard's
   `pending_approvals` block, which is purpose-built for it.
 - **`?search=`** matches CC-ID, change title and owner name only — not
   descriptions, not affected systems.
+- **`?created_after=` / `?created_before=`** are **`YYYY-MM-DD`**, inclusive —
+  **not** the RFC 3339 that every date *write* field requires (A5.1). A full
+  timestamp is a 400 here, exactly as a bare date is a 400 there. Same API,
+  opposite formats, decided by direction of travel.
+
+**`GET /users`** (Admin only):
+
+- ⚠️ **`?active=true|false`**, **NOT `?is_active=`** — the response field is
+  `is_active` but the query parameter is not. **An unrecognised query parameter
+  is ignored silently**, so `?is_active=true` returns every user, including the
+  deactivated ones, with `200 OK` and no error at all. Omit the parameter
+  entirely for all users.
+
+**`GET /approvers`** takes no parameters — it is already filtered server-side to
+active users holding the Approver role.
 
 ## A10. Per-screen notes
 
@@ -701,7 +849,7 @@ field alone.
 
 ```ts
 // READ — every field present; null means empty
-export interface ChangeControl {
+export interface ChangeControlResponse {
   cc_id: string;
   current_state: State;
   change_title: string | null;
@@ -734,7 +882,7 @@ Read the two together against A3:
 | `change_title: 'Fix'` | `"change_title": "Fix"` | set |
 
 **Expect two interfaces per resource wherever partial updates apply** — so
-`ChangeControl` / `SaveDraftRequest`, and `ChangeControl` /
+`ChangeControlResponse` / `SaveDraftRequest`, and `ChangeControlResponse` /
 `SaveImplementationRequest`.
 
 Transitions need no write type beyond their credentials, since they carry no field
@@ -759,15 +907,51 @@ fields must send `null`**, since `""` is a parse error there (A5.1).
 
 ### Errors are a discriminated union
 
-```ts
-export interface ApiError      { error: string }
-export interface ValidationError { error: string; issues: string[] }
+**Three members, not two.** The names below are the `openapi.yaml` schema names,
+which is what the code uses — see the note at the end of B6.
 
-export type ErrorBody = ApiError | ValidationError;
+```ts
+export interface ErrorResponse             { error: string }
+export interface ValidationErrorResponse   { error: string; issues: string[] }
+export interface BlockedRoleChangeResponse { error: string; blocked_cc_ids: string[] }
+
+export type ErrorBody =
+  | ErrorResponse
+  | ValidationErrorResponse
+  | BlockedRoleChangeResponse;
 ```
 
-`'issues' in err` narrows the type, so the caller can render a list or a single
-message without casting.
+Narrow with two **independent** `in` checks. The discriminating keys are
+disjoint, so order does not matter and `ErrorResponse` is simply what remains:
+
+```ts
+if ('issues' in err) …              // A8.1 — collected validation failures
+else if ('blocked_cc_ids' in err) … // A8.3 — the 409 on the two user PUTs
+else …                              // `error` alone
+```
+
+**Omitting the third member is the trap.** A8.3 is documented in prose two pages
+earlier, so it reads as covered; but if the union has only two members,
+`blocked_cc_ids` is unreachable without a cast — in the one place where the user
+must be told that the whole request was rejected, not just part of it.
+
+### Type names follow `openapi.yaml`
+
+`src/lib/types.ts` names every type after its `components/schemas` entry, so any
+type in the code can be looked up in the contract with no translation table. B6
+now uses those names throughout.
+
+**Three were renamed** — recorded here because earlier drafts of B6, and anything
+written from them, use the left column:
+
+| Was, before step 2 | Is |
+|---|---|
+| `ChangeControl` | `ChangeControlResponse` |
+| `ApiError` | `ErrorResponse` |
+| `ValidationError` | `ValidationErrorResponse` |
+
+A naming change only. The read/write split, the `?`, and the null-versus-absent
+model are unchanged and still govern.
 
 ## B7. `api.ts` — one wrapper, no raw fetch in components
 
@@ -779,8 +963,9 @@ Responsibilities:
   `FormData`** (below)
 - On **401**: refresh once, retry once, else clear the store and `goto('/login')`.
   Never loop
-- Parse both error shapes into the discriminated union from B6, so the caller can
-  narrow with `'issues' in err`
+- Parse **all three** error shapes into the discriminated union from B6, so the
+  caller can narrow with `'issues' in err` and `'blocked_cc_ids' in err` — two
+  independent checks, not a chain
 - Expose a separate path for the file download, which returns a **blob** rather
   than JSON (A6.2)
 

@@ -122,9 +122,23 @@ export interface ErrorResponse {
 
 /**
  * Returned when several things are wrong at once — all failures are collected,
- * the API never stops at the first. Used by the transition endpoints (missing
- * mandatory fields, failed date rules) and by the two save endpoints (keys that
- * are not editable in the current state).
+ * rather than stopping at the first.
+ *
+ * ⚠️ FOUR endpoints return this, not "the transitions":
+ *
+ *   - the two save endpoints — keys not editable in the current state
+ *   - **T2 and T6 only** — the two *submit* transitions: missing mandatory
+ *     fields, failed date rules
+ *
+ * Cancel, decision and final-decision fail on the **first** problem with a plain
+ * `ErrorResponse`. That is deliberate, not an oversight: they validate a small
+ * request body the user just typed, where one message points at one field. T2
+ * and T6 validate stored state across twenty-odd fields, where stopping at the
+ * first would mean twenty round trips.
+ *
+ * Confirmed in the handlers — only `HandlerSubmitForImplApproval` and
+ * `HandlerSubmitForFinalApproval` declare an issues array
+ * (`handlers_workflow.go:22, 862`).
  */
 export interface ValidationErrorResponse {
 	error: string;
@@ -142,8 +156,22 @@ export interface BlockedRoleChangeResponse {
 	blocked_cc_ids: string[];
 }
 
-/** Narrow with `'issues' in err` — no cast needed. */
-export type ErrorBody = ErrorResponse | ValidationErrorResponse;
+/**
+ * Every error body the API can produce. All three members must be here or the
+ * third is unreachable without a cast — which is what `blocked_cc_ids` was.
+ *
+ * Narrow with two independent `in` checks, not a chain:
+ *
+ * ```ts
+ * if ('issues' in err) …             // ValidationErrorResponse
+ * else if ('blocked_cc_ids' in err) … // BlockedRoleChangeResponse
+ * else …                              // ErrorResponse — `error` alone
+ * ```
+ *
+ * The two discriminating keys are disjoint, so order does not matter and
+ * `ErrorResponse` is simply what is left. No cast needed.
+ */
+export type ErrorBody = ErrorResponse | ValidationErrorResponse | BlockedRoleChangeResponse;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Auth
@@ -169,6 +197,15 @@ export interface LoginResponse {
 	refresh_token: string;
 }
 
+/**
+ * The body of **both** `POST /refresh` and `POST /revoke` — the spec points the
+ * revoke endpoint at this same schema (`openapi.yaml:1054`), so there is no
+ * `RevokeRequest` to transcribe.
+ *
+ * Revoke is idempotent: 204 whether the token was valid, already revoked or
+ * never existed, and it carries no `Authorization` header (`security: []`).
+ * Clear local state on any outcome, including a network failure.
+ */
 export interface RefreshRequest {
 	refresh_token: string;
 }
@@ -232,7 +269,16 @@ export interface ApproverRef {
 	full_name: string;
 }
 
-/** `GET /approvers`. The array is wrapped in an object, not returned bare. */
+/**
+ * `GET /approvers`. The array is wrapped in an object, not returned bare.
+ *
+ * ⚠️ **Not paginated** — `users.sql:29-32` has no `LIMIT`, so this returns every
+ * active approver in one response. There is no `total`, no `limit`, no `offset`;
+ * sending them is ignored rather than an error. Render the whole array.
+ *
+ * Sorted **`full_name` ascending** — alphabetical, the opposite direction from
+ * the change-control list's `last_updated_on DESC`. No sort parameter exists.
+ */
 export interface ListApproversResponse {
 	approvers: ApproverRef[];
 }
@@ -242,8 +288,14 @@ export interface CreateUserRequest {
 	email: string;
 	/**
 	 * Minimum 8 characters with at least one lowercase letter, one uppercase
-	 * letter, one digit and one special character. All unmet requirements come
-	 * back together in `issues`.
+	 * letter, one digit and one special character.
+	 *
+	 * ⚠️ Every unmet requirement is reported, but **joined into the single
+	 * `error` string** — `"Password must contain at least 1 uppercase letter, at
+	 * least 1 digit"`. There is **no `issues` array**: this is a plain
+	 * `ErrorResponse`, so render `error` as it arrives and do not try to
+	 * iterate. `handlers_users.go:78-82`, joining `validatePassword`'s slice
+	 * with `strings.Join(problems, ", ")`.
 	 */
 	password: string;
 	role: Role;
@@ -461,8 +513,20 @@ export interface SaveDraftRequest {
 	department_function?: DepartmentFunction | null;
 	affected_systems_modules?: string | null;
 
-	// ⚠️ The next four are the DATE and TIME fields. To clear one, send `null`.
-	//    `''` clears a text field but is a PARSE ERROR here — blueprint A5.1.
+	// ⚠️⚠️ The next four are the DATE and TIME fields, and they take **RFC 3339
+	//    only** — NOT `YYYY-MM-DD`, which is exactly what `<input type="date">`
+	//    produces. The handler unmarshals each into a Go `*time.Time`
+	//    (`handlers_cc.go:764-768`), so `"2026-09-01"` is rejected with the same
+	//    400 as `''`. Send `"2026-09-01T00:00:00Z"`; a TIME field goes back in
+	//    the placeholder form it arrived in, `"0000-01-01T09:00:00Z"`.
+	//
+	//    To clear one, send `null`. `''` clears a text field but is a PARSE
+	//    ERROR here — blueprint A5.1.
+	//
+	//    ⚠️ The list filters take the OTHER format: `created_after` and
+	//    `created_before` in `ChangeControlListParams` are `YYYY-MM-DD` and
+	//    reject a full timestamp. Two date formats in one API — the direction of
+	//    travel is what decides which.
 	proposed_implementation_date?: string | null;
 	target_closure_date?: string | null;
 	implementation_window_start?: string | null;
@@ -493,8 +557,14 @@ export interface SaveDraftRequest {
  */
 export interface SaveImplementationRequest {
 	/**
-	 * ⚠️ A DATE field: clear it with `null`, never `''` — an empty string is a
-	 * parse error here, as it is for the four in `SaveDraftRequest`.
+	 * ⚠️⚠️ A DATE field taking **RFC 3339**, not `YYYY-MM-DD` — the same trap as
+	 * the four in `SaveDraftRequest`, in the one field a user reaches through a
+	 * date picker in `In Implementation`. `handlers_cc.go:1428-1435` unmarshals
+	 * into `*time.Time`, so `"2026-09-01"` is a 400. Send
+	 * `"2026-09-01T00:00:00Z"`.
+	 *
+	 * Clear it with `null`, never `''` — an empty string is a parse error here
+	 * as it is there.
 	 *
 	 * Any date is accepted at save; T6 is what rejects a future one.
 	 */
@@ -557,6 +627,16 @@ export interface SignatureItem {
 	signed_on: string;
 }
 
+/**
+ * `GET /changecontrols/{ccID}/signatures`.
+ *
+ * ⚠️ **Not paginated** — `esignatures.sql:6-10` has no `LIMIT`: a complete
+ * history is never truncated. Sorted **`signed_on` ascending**, oldest first, so
+ * the panel reads top-to-bottom in the order things happened. Do not reverse it.
+ *
+ * An empty array is a legitimate answer — a record in `Initiated` has none,
+ * since T1 requires no signature.
+ */
 export interface SignatureListResponse {
 	signatures: SignatureItem[];
 }
@@ -633,11 +713,27 @@ export interface DashboardResponse {
 // Query parameters
 //
 // Inline `parameters` in the spec rather than named schemas, but part of the
-// contract all the same. `limit` defaults to 50 (max 100) and `offset` to 0;
-// reset `offset` to 0 whenever a filter changes or the page may come back empty.
+// contract all the same. `limit` defaults to 50 and `offset` to 0; reset
+// `offset` to 0 whenever a filter changes or the page may come back empty.
+//
+// ⚠️ `limit`'s ceiling is **200, not 100** (`maxPageLimit`, `helpers.go:23`),
+//    and the server **CLAMPS silently rather than rejecting**
+//    (`helpers.go:98-99`): ask for 500 and you get 200 rows back, 200 OK, with
+//    nothing saying you were capped. Only `limit < 1` or a non-integer is a 400.
+//
+//    So the page size a request asked for cannot be assumed to be the page size
+//    it got — read `limit` back off the response (both list responses carry it)
+//    before computing "page N of M", or the arithmetic silently goes wrong for
+//    anyone who hand-edits the URL.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** `GET /changecontrols`. All filters are optional and combine with AND. */
+/**
+ * `GET /changecontrols`. All filters are optional and combine with AND.
+ *
+ * Sorted **`last_updated_on` DESC** in SQL, with no sort parameter — column
+ * headers are not sortable. Note `GET /users` sorts the *other* way,
+ * `full_name` ASC.
+ */
 export interface ChangeControlListParams {
 	limit?: number;
 	offset?: number;
@@ -649,16 +745,30 @@ export interface ChangeControlListParams {
 	/** Exact match on ONE state. For "either pending state", use the dashboard's
 	 *  `pending_approvals` block, which is purpose-built for it. */
 	state?: State;
-	/** Inclusive, `YYYY-MM-DD`. */
+	/**
+	 * ⚠️ `YYYY-MM-DD` — the **opposite** of every date *write* field, which take
+	 * RFC 3339. `handlers_cc.go:373` parses this with the layout `2006-01-02`,
+	 * so a full timestamp is a 400 here just as a bare date is a 400 in
+	 * `SaveDraftRequest`. One file, two formats, in opposite directions.
+	 *
+	 * Inclusive.
+	 */
 	created_after?: string;
-	/** Inclusive of the whole day. */
+	/** `YYYY-MM-DD` as `created_after` (`handlers_cc.go:383`). Inclusive of the
+	 *  whole day. */
 	created_before?: string;
 	/** Case-insensitive substring across CC-ID, change title and owner name —
 	 *  not the description or any other field. */
 	search?: string;
 }
 
-/** `GET /users`. Admin only. Omit `active` for all users. */
+/**
+ * `GET /users`. Admin only. Omit `active` for all users.
+ *
+ * Sorted **`full_name` ASC** (`users.sql:22` — bare `ORDER BY full_name`, so
+ * ascending), not `last_updated_on DESC` like the change-control list. No sort
+ * parameter either way.
+ */
 export interface UserListParams {
 	limit?: number;
 	offset?: number;

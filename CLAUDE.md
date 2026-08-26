@@ -21,11 +21,13 @@ prototypes, not a redesign.
 6. **After each step, tell Lain exactly what to verify** — what to click in the
    browser, which endpoint to check, which psql query to run. Do not declare a
    step done; propose the check that would prove it.
+7. **Before starting a step, verify the blueprint sections it depends on against
+   the Go** — the two or three it is built on, not the document. Map below.
 
 ### Rules Lain enforces — Claude cannot
 
-These are here so Claude knows the intent, not because it can self-police them.
-Claude has no memory of previous sessions and cannot detect session boundaries.
+Here so Claude knows the intent — it has no memory across sessions and cannot
+detect session boundaries, so it cannot self-police these.
 
 - **One build step per session.** If a step is finished, say so and stop. Do not
   begin the next one.
@@ -37,7 +39,9 @@ Claude has no memory of previous sessions and cannot detect session boundaries.
 
 | Question | Read |
 |---|---|
-| What does this endpoint accept/return? | `docs/openapi.yaml` — **the definitive contract** |
+| What shape is this — nullability, enum values, field traps? | **`src/lib/types.ts` first.** Its comments carry what the spec states only in passing. **Silent on flow, auth lifetime and handler internals** — use the Go for those |
+| What does the API *actually do*? | **`../ea-qms-backend`** — `handlers_*.go`, `sql/queries/`, `sql/schema/`, `constants.go`, `middleware.go`, `main.go`. **Read it whenever a document makes a claim about API behaviour.** Everything else here is a transcription of it |
+| What does this endpoint accept/return? | `docs/openapi.yaml` — the written contract |
 | What must the client do, in what order? | `docs/FRONTEND_BLUEPRINT.md` Part A |
 | How do we build it in Svelte? | `docs/FRONTEND_BLUEPRINT.md` Part B |
 | Which fields can this role edit in this state? | `docs/Security_Matrix_V2_1.md` |
@@ -50,15 +54,45 @@ and the relevant blueprint section. Do not work from memory of them.
 
 ### Precedence when documents disagree
 
-1. **`openapi.yaml`** for request and response shapes. It was hand-written *from*
-   the handler code — a transcription, so **not infallible**. If a real response
-   does not match it, check the Go handler before assuming the client is wrong,
-   and fix the spec.
-2. **`docs/CC_Field_Reference.md`** for enum strings — it overrides the BRD.
-3. **`docs/FRONTEND_BLUEPRINT.md`** is canonical for everything else. The
-   `.claude/rules/` files are **extracts** kept short so they load at write time;
-   if a rule disagrees with the blueprint, **the blueprint is right and the rule
-   is stale** — say so rather than following the rule.
+0. **`../ea-qms-backend`** — the implementation. Nothing outranks it, and it is
+   the only tiebreak that works when the documents *agree*.
+1. **`src/lib/types.ts`** — shapes, nullability, enum values, field traps.
+2. **`openapi.yaml`** for request and response shapes generally. A transcription
+   of the handlers, so **not infallible** — if a real response disagrees, check
+   the Go and fix the spec.
+3. **`docs/CC_Field_Reference.md`** for enum strings — it overrides the BRD.
+4. **`docs/FRONTEND_BLUEPRINT.md`** for everything else. The `.claude/rules/`
+   files are **extracts** that load at write time; if a rule disagrees with the
+   blueprint, **the blueprint is right and the rule is stale**.
+
+⚠️ **Agreement is not corroboration when one document was copied from another.**
+Precedence resolves disagreements only; when all of them agree and all are wrong,
+level 0 is the only thing that catches it. It has happened — see `PROGRESS.md`.
+
+## Rule 7 — verify a step's sections before starting it
+
+Two or three sections, not the document. **Check each claim against the Go**
+rather than skimming: what has been found so far read as plausible prose, and
+some of it was *omission*, which skimming cannot surface. **A13 is out of
+scope** — it summarises what other sections already state.
+
+| Sections | Before | Against |
+|---|---|---|
+| **A1** Authentication | Step 3 — ✅ done | `handlers_auth.go`, `middleware.go`, `main.go`, `sql/queries/refresh_tokens.sql` |
+| **A2** Save-then-submit · **A3** Partial updates | Step 7 | `handlers_cc.go` — `HandlerSaveDraft` |
+| **A6** Files | Steps 12, 14 | `handlers_files.go`, `file_sanitizer.go` |
+| **A7** E-signatures | Steps 9, 12 | `handlers_workflow.go` |
+| **A10** Per-screen notes | Steps 5, 15 | `handlers_dashboard.go`, `handlers_users.go` |
+| **A11** IDs and names | Wherever an id or name is compared or rendered | the handler building that response |
+| **A12** CORS | Step 3 | `middleware.go` — `middlewareCORS` |
+
+**Push every correction into `.claude/rules/` too** — those load at write time
+and the blueprint does not, so a stale rule pulls the code back toward the error
+just fixed. Record the audit in `PROGRESS.md`, **including claims that proved
+correct**, so they are not re-investigated next session.
+
+⚠️ **Findings go to `.claude/rules/` and `PROGRESS.md` — never here.**
+`CLAUDE.md` changes only when a **rule** changes, never to record a finding.
 
 ## Traps that will otherwise cost a day
 
@@ -137,9 +171,8 @@ gates and eventually closed — useful for the signature-history panel.
 Blueprint **B9** — seventeen steps, each independently verifiable and each stating
 what it proves. Work through them in order.
 
-**One constraint:** file upload cannot come before the `In Implementation` view.
-The only upload field is writable only in that state, which a record reaches after
-two transitions.
+**One constraint:** file upload cannot come before the `In Implementation` view —
+the only upload field is writable in that state alone.
 
 **Step 1 includes copying `docs/prototypes/global.css` to `src/lib/global.css`.**
 Vite will not serve from `docs/`, so the layout imports the copy. If the two ever
@@ -147,31 +180,20 @@ diverge, `docs/prototypes/global.css` is the original.
 
 ## PROGRESS.md — the memory between sessions
 
-**Each session starts with a fresh context window.** `CLAUDE.md` and
-`.claude/rules/` reload automatically; the conversation does not. `PROGRESS.md` is
-what carries everything else.
+`CLAUDE.md` and `.claude/rules/` reload each session; the conversation does not.
 
-**At the start of a session:** read `PROGRESS.md` to see which step is next, what
-was decided, and what is flagged. Do not ask Lain to re-explain what is written
-there.
+**At the start of a session:** read `PROGRESS.md` for the next step, what was
+decided, and what is flagged. Do not ask Lain to re-explain what is in it.
 
-**At the end of each build step, once Lain confirms it works:** update
-`PROGRESS.md` before moving on. Four things:
+**At the end of each step, once Lain confirms it works**, record four things:
 
-1. **Mark the step done** — and record what was verified, not just that it was
-   built. "Saved a partial body; confirmed in psql that untouched fields were
-   unchanged" beats "Save Draft works."
-2. **Any decision made** — with the reasoning, and the alternative that was
-   rejected. Numbered, so it can be referred to later.
-3. **Any flag** — something known, deliberately deferred, with why. A flag is not
-   a defect; keep the two apart.
-4. **Anything that contradicted a document** — and whether the document or the
-   code was wrong. If the document was wrong, say which one and that it needs
-   amending.
+1. **The step done** — and *what was verified*, not that it was built. "Saved a
+   partial body; confirmed in psql that untouched fields were unchanged" beats
+   "Save Draft works."
+2. **Any decision** — with the reasoning and the rejected alternative. Numbered.
+3. **Any flag** — deferred, with why. **A flag is not a defect**; keep them apart.
+4. **Anything that contradicted a document** — and which was wrong. If the
+   document was wrong, name it and say it needs amending.
 
-**Reversals get recorded too**, with the reasoning for both the original decision
-and the change. A log containing only successes is fiction, and the next session
-will re-litigate a settled question without it.
-
-Keep entries short. This file is read at the start of every session, so it earns
-its length or it stops being read.
+**Record reversals too**, with the reasoning for both the original decision and
+the change. Keep entries short — the file earns its length or stops being read.
