@@ -91,16 +91,39 @@ Also implement that reactive path, since a laptop that slept will wake with a de
 token:
 
 ```
-request → 401
+request → 401 "Unauthorized"
   → POST /refresh (once)
       → success: retry the original request (once)
-      → failure: clear the store, redirect to login
+      → 401 or 400: clear the store, redirect to login
+      → network error or 500: return the error, and the session stands
+request → 401 "Account is deactivated" → clear the store, redirect to login
+request → any other 401 → return it to the caller untouched
 ```
 
 **Never loop.** One refresh, one retry, then give up.
 
+⚠️ **The status alone cannot say whether the token is the problem, but the
+body can.** Every signed transition (T2–T8) returns 401 `Invalid credentials`
+when the e-signature fails. On status alone, a mistyped signature password
+would trigger a refresh. The refresh would succeed and the retry would fail the
+same way, so the user would be logged out for a typo. Worse, each attempt
+writes its own `SignatureFailed` audit row, so the wrapper would turn one
+failed attempt into two in a regulated record. `middlewareAuth` sends exactly
+two 401 messages: `Unauthorized` (token missing, invalid or expired) and
+`Account is deactivated`. Only the first is worth a refresh. Every other 401 is
+a handler's own verdict. Apply the same rule to the retry's response.
+
+Matching on the message couples the client to `middlewareAuth`'s wording. If
+the wording changes, the retry stops firing and an expired token surfaces as an
+error. That is the safe direction to fail. A machine-readable error code would
+remove the coupling, and it is deferred because it changes a completed API.
+
+**Only a verdict on the token ends the session.** A 401 or 400 from `/refresh`
+logs out. A network error or a 500 says nothing about the token, so the error
+goes back to the caller and the session is kept.
+
 ⚠️ **Exempt `/login`, `/refresh` and `/revoke` from that path.** All three are
-mounted without the auth middleware (`main.go:96-98`), take no bearer token, and
+registered in `main.go` without `middlewareAuth`. They take no bearer token, and
 return 401 for their *own* reasons — a wrong password, a dead refresh token.
 Applied literally to every response, the rule above turns a mistyped password
 into a refresh attempt with whatever stale token `localStorage` still holds, and
@@ -124,8 +147,8 @@ never existed. `RevokeRefreshToken` carries `AND revoked_at IS NULL`, so a secon
 revoke updates nothing and still returns 204.
 
 ⚠️ **It is not unconditionally 204.** A blank or missing `refresh_token`, or a
-malformed body, is a **400** — the handler validates the body before it ever
-reaches the database (`handlers_auth.go:120-130`). So "logging out never fails"
+malformed body, is a **400**. `HandlerRevoke` decodes the body and checks for a
+blank token before it ever reaches the database. So "logging out never fails"
 holds for every *token* state and fails at the one case the client actually
 produces: **logging out when `localStorage` holds no refresh token** — already
 logged out, storage cleared, a fresh browser.
@@ -141,8 +164,8 @@ reusable elsewhere; it is not what ends the session in this tab.
 
 ### A1.4a Logout ends *this* session, not every session
 
-**Login never revokes existing refresh tokens** — `HandlerLogin` inserts a new
-row each time (`handlers_auth.go:216-232`). Two browsers, or a re-login without a
+**Login never revokes existing refresh tokens.** `HandlerLogin` inserts a new
+row each time through `CreateRefreshToken` and revokes nothing. Two browsers, or a re-login without a
 logout, leave two independent live tokens, and `/revoke` kills only the one in the
 body.
 
@@ -160,8 +183,8 @@ Build it last. The system is correct without it.
 ### A1.6 Deactivation takes effect on the next request, not in 30 minutes
 
 `middlewareAuth` re-reads the user from the database and checks `is_active` on
-**every authenticated request** (`middleware.go:69`), and `/refresh` checks it
-again independently (`handlers_auth.go:85`). A valid, unexpired access token does
+**every authenticated request**, and `HandlerRefresh` checks it again
+independently. A valid, unexpired access token does
 **not** keep a deactivated user working until it expires.
 
 So when an Admin deactivates someone at step 15, that user's next action —
@@ -176,6 +199,7 @@ it does need is the *right message*: this is not an expired session.
 | `Invalid refresh token` | Not found, or revoked | Session ended — sign in again |
 | `Session expired` | 24 h absolute reached, **or** 2 h idle | Session expired — sign in again |
 | `Account is deactivated` | `is_active = false` (A1.6) | **Your account has been deactivated** — signing in again will not help |
+| `Unauthorized` | The token's user no longer exists (`HandlerRefresh`'s user lookup) | Session ended — sign in again |
 
 All three end in the same place: clear the store, go to `/login`. But the third
 is not the user's fault and not fixable by retrying, so showing "your session
@@ -187,8 +211,8 @@ screen** rather than discarding it.
 
 ### A1.8 What only refresh advances
 
-**`TouchRefreshToken` is called in exactly one place** — `HandlerRefresh`, after
-validation and before the new JWT is minted (`handlers_auth.go:92`). Nothing else
+**`TouchRefreshToken` is called in exactly one place**: `HandlerRefresh`, after
+validation and before the new JWT is minted. Nothing else
 in the codebase touches it.
 
 **Ordinary API calls do not advance the sliding window.** Saving a draft for
@@ -404,7 +428,9 @@ Pre-fill the field with the current user's email.
 ### A7.3 A failed signature changes nothing
 
 401, an audit row recording the attempt, and the record **untouched**. Retrying is
-safe. Never store the password; clear it when the modal closes.
+safe when the *user* retries. The wrapper must **never** retry it
+automatically, because each attempt writes its own `SignatureFailed` row
+(A1.2). Never store the password; clear it when the modal closes.
 
 ### A7.4 The signature comes last
 
@@ -606,12 +632,30 @@ the approver.
 The API allows origins listed in its `ALLOWED_ORIGINS` environment variable.
 `http://localhost:5173` (the Svelte dev server) must be among them.
 
-A misconfigured origin fails in a confusing way: **the request reaches the server
-and executes**, and only then does the browser refuse to hand the response to
-JavaScript. A database write can succeed while the client sees a network error.
+A misconfigured origin fails in a confusing way, but **it cannot write**.
 
-If requests fail with no useful message, check the browser console for a CORS
-error before suspecting the API.
+- **Preflight.** A request with an `Authorization` header or a JSON
+  `Content-Type` makes the browser send a preflight `OPTIONS` first.
+  `middlewareCORS` answers a disallowed origin's preflight with no
+  `Access-Control-Allow-Origin`, so the browser stops there and **never sends
+  the real request**.
+- **Requests that skip the preflight** are a GET or a multipart upload sent
+  with no token. `middlewareAuth` rejects those with a 401 before any handler
+  runs.
+
+So nothing this app sends from a disallowed origin gets past the preflight or
+the auth check. The client just sees a network error with nothing useful in it
+(`status: 0` from `api.ts`). Check the browser console for a CORS error before
+suspecting the API.
+
+⚠️ **Status 0 on a write still does not prove that nothing happened.** A
+connection dropped after the commit looks identical. That is a network
+problem, not a CORS one.
+
+*This was corrected at step 3. It had said that a blocked request "reaches the
+server and executes", which is true only of simple requests, and in this app
+those are always token-less. The result was reasoned from `middlewareCORS` and
+the Fetch spec's preflight rules, not observed with a wrong `ALLOWED_ORIGINS`.*
 
 ## A13. Deviations from the original BRD
 
@@ -961,8 +1005,12 @@ Responsibilities:
 - Attach `Authorization: Bearer` from the auth store
 - Set `Content-Type: application/json` for JSON bodies — **and never for
   `FormData`** (below)
-- On **401**: refresh once, retry once, else clear the store and `goto('/login')`.
-  Never loop
+- On a **401 whose body is `Unauthorized`**: refresh once and retry once. A
+  401 or 400 from the refresh clears the store and runs `goto('/login')`. Any
+  other refresh failure is returned, and the session is kept. Never loop.
+  `Account is deactivated` logs out without a refresh. **Every other 401**,
+  such as `Invalid credentials` from a failed e-signature, goes back to the
+  caller untouched. A1.2
 - Parse **all three** error shapes into the discriminated union from B6, so the
   caller can narrow with `'issues' in err` and `'blocked_cc_ids' in err` — two
   independent checks, not a chain
@@ -1152,9 +1200,9 @@ the base and never repeats `/api`.
 ### When requests fail with nothing useful
 
 Check the **browser console** for a CORS error before suspecting the API. A
-blocked request still reaches the server and executes — the browser simply refuses
-to hand the response to JavaScript (A12), so a write can succeed while the client
-sees a network error.
+request blocked by CORS either stops at the preflight or, having no token, is
+rejected by the auth check. Either way it never runs a handler (A12), so it
+cannot have written anything.
 
 The fastest check is `curl` from WSL, which is not subject to CORS:
 

@@ -964,7 +964,20 @@ components:
 
   responses:
     Unauthorized:
-      description: Missing, malformed or expired access token.
+      description: |
+        `middlewareAuth` rejected the request. It sends **exactly two**
+        messages, and a client must branch on which one it gets. The status
+        alone does not say whether the token is the problem.
+
+        | `error` | Cause | Client |
+        |---|---|---|
+        | `Unauthorized` | Access token missing, malformed or expired, or its user no longer exists | Refresh once, then retry once |
+        | `Account is deactivated` | The user's `is_active` is false. It is re-checked on every request, so this applies immediately | End the session. A refresh would return the same |
+
+        The five signed transitions can also return 401 `Invalid credentials`
+        for a failed e-signature. That is the handler's own verdict, not a
+        token failure. **Never retry it automatically**, because each attempt
+        writes its own `SignatureFailed` audit row.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/ErrorResponse" }
@@ -1055,7 +1068,7 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401":
           description: |
-            **Three distinct causes, and the message says which.** All three end
+            **Four distinct causes, and the message says which.** All four end
             the session, but only the first two are worth offering a sign-in for.
 
             | `error` | Cause |
@@ -1063,6 +1076,7 @@ paths:
             | `Invalid refresh token` | Not found, or already revoked |
             | `Session expired` | 24 h absolute reached, **or** 2 h idle |
             | `Account is deactivated` | The user's `is_active` is false |
+            | `Unauthorized` | The token's user no longer exists. Not reachable through this API, which has no delete-user endpoint |
 
             `is_active` is re-checked here and on every authenticated request, so
             a deactivated user is stopped immediately rather than at access-token

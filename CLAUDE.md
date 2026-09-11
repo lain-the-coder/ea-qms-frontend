@@ -41,6 +41,7 @@ detect session boundaries, so it cannot self-police these.
 |---|---|
 | What shape is this — nullability, enum values, field traps? | **`src/lib/types.ts` first.** Its comments carry what the spec states only in passing. **Silent on flow, auth lifetime and handler internals** — use the Go for those |
 | What does the API *actually do*? | **`../ea-qms-backend`** — `handlers_*.go`, `sql/queries/`, `sql/schema/`, `constants.go`, `middleware.go`, `main.go`. **Read it whenever a document makes a claim about API behaviour.** Everything else here is a transcription of it |
+| What changed in the backend after `types.ts`? | `docs/BACKEND_CHANGES.md`: six changes, and the contract did not change. It summarises the Go changes, so the Go outranks it |
 | What does this endpoint accept/return? | `docs/openapi.yaml` — the written contract |
 | What must the client do, in what order? | `docs/FRONTEND_BLUEPRINT.md` Part A |
 | How do we build it in Svelte? | `docs/FRONTEND_BLUEPRINT.md` Part B |
@@ -75,6 +76,17 @@ Two or three sections, not the document. **Check each claim against the Go**
 rather than skimming: what has been found so far read as plausible prose, and
 some of it was *omission*, which skimming cannot surface. **A13 is out of
 scope** — it summarises what other sections already state.
+
+⚠️ **A universal claim needs a sweep of the whole backend.** The map below is
+not enough when a section's claim covers "any response", "every endpoint",
+"all transitions", or a status code in general. For those, sweep the whole
+backend for the thing being claimed. The map shows where a section's *own*
+behaviour lives. It does not show where a universal claim could be proved
+false. This has failed twice:
+- A1.2 made a claim about every 401 and was checked against the auth files,
+  but the e-signature 401 lives in `handlers_workflow.go`.
+- A9 said "sort is fixed" for every list endpoint and was checked against
+  one of the four.
 
 | Sections | Before | Against |
 |---|---|---|
@@ -116,9 +128,13 @@ correct**, so they are not re-investigated next session.
 5. **`null` clears a field; `""` is a parse error on dates.** Text fields accept
    both. Date and time fields accept only `null`. Blueprint A3, A5.
 
-6. **CORS fails confusingly.** A blocked request reaches the server and executes —
-   the browser only hides the response. A write can succeed while the client sees a
-   network error. Check the browser console first. Blueprint A12.
+6. **CORS fails confusingly.** A misconfigured origin shows up as a bare
+   network error (status 0), so check the browser console first. It cannot
+   cause a silent write. Every request that could write is stopped at the
+   preflight, and any request that skips the preflight carries no token, so
+   the auth middleware rejects it. **Status 0 on a write still does not prove
+   that nothing happened**: a connection dropped after the commit looks the
+   same. Blueprint A12.
 
 ## Stack — settled, do not re-litigate
 

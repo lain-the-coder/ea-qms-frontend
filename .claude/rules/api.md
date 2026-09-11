@@ -50,9 +50,13 @@ They match the wire format, narrow inside `{#if}`, and need no conversion.
 - **Never set `Content-Type` on a `FormData` body.** A multipart request needs a
   boundary string only the browser knows; setting the header by hand omits it and
   the server cannot parse the body. The wrapper must branch on body type
-- On **401**: refresh **once**, retry **once**, else clear the store and
-  `goto('/login')`. Never loop
-- Parse both error shapes into a discriminated union so `'issues' in err` narrows
+- On a **401 whose body is `Unauthorized`**: refresh **once**, retry **once**.
+  A 401 or 400 from the refresh clears the store and runs `goto('/login')`. A
+  network error or 500 from the refresh is returned, and the session is kept.
+  Never loop. See "Auth" below for the other 401s
+- Parse **all three** error shapes into the `ErrorBody` union (below), so the
+  caller narrows with `'issues' in err` and `'blocked_cc_ids' in err`, two
+  independent checks
 - A separate path for file download, returning a **blob**
 
 A raw `fetch` in a component skips the token, the refresh and the error parsing.
@@ -116,6 +120,17 @@ Skip the scheduled refresh when nothing happened; the 401 path covers wake-from-
 and the 401-refresh-retry path.** They are mounted without the auth middleware
 and 401 for their own reasons. Without the exemption a mistyped password fires a
 refresh and logs the user out instead of saying "incorrect email or password".
+The exemption comes from how `api.ts` is built: those three have their own
+functions, and only `request()` has a 401 path.
+
+⚠️ **Retry only on a 401 whose body is `Unauthorized`.** The status alone
+cannot tell a dead token from a failed e-signature. Every signed transition
+returns 401 `Invalid credentials`. Retrying it logs the user out for a typo,
+and it writes a **second `SignatureFailed` audit row** for one attempt.
+`middlewareAuth` sends only `Unauthorized` and `Account is deactivated`. The
+second ends the session with no refresh. Every other 401 goes back to the
+caller. Apply the same rule to the retry's response. This couples the client
+to the wording in `middleware.go`, and it fails safe if that wording changes.
 
 `POST /revoke` is idempotent across every **token** state — valid, already
 revoked, never existed — all 204. **But a blank or missing `refresh_token` is a
