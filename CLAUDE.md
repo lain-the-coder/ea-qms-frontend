@@ -184,8 +184,8 @@ gates and eventually closed — useful for the signature-history panel.
 
 ## Build order
 
-Blueprint **B9** — seventeen steps, each independently verifiable and each stating
-what it proves. Work through them in order.
+Blueprint **B9** — each step independently verifiable and each stating what it
+proves. Work through them in order.
 
 **One constraint:** file upload cannot come before the `In Implementation` view —
 the only upload field is writable in that state alone.

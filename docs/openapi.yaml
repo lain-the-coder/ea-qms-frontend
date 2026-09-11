@@ -1213,14 +1213,18 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/UserStatusResponse" }
-        "400": { $ref: "#/components/responses/BadRequest" }
-        "401": { $ref: "#/components/responses/Unauthorized" }
-        "403":
-          description: Not an Admin, or attempting to change one's own role.
+        "400":
+          description: |
+            Malformed body, an invalid user ID, blank or invalid values, or an
+            attempt to change one's own role. The self-role check fires only
+            when the requested role differs from the current one, so sending
+            your own current role is a 200 no-op, not an error.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
-              example: { error: You cannot change your own role }
+              example: { error: Self Role Change is not allowed }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
           description: Blocked by active change controls.
@@ -1254,11 +1258,13 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/UserStatusResponse" }
         "400":
-          description: Attempting to deactivate oneself.
+          description: |
+            Attempting to deactivate oneself, a malformed body, a missing
+            `is_active`, or an invalid user ID.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
-              example: { error: You cannot deactivate your own account }
+              example: { error: Self Deactivation is not allowed }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }

@@ -114,6 +114,22 @@ export async function refresh(refreshToken: string): Promise<ApiResult<RefreshRe
 }
 
 /**
+ * Whether a failed `/refresh` is the server's verdict on the token, which
+ * ends the session (decision 12). A network error (status 0) or a 500 says
+ * nothing about the token, so the session stands.
+ *
+ * Shared by `request()` below and the session restore in the `(app)` layout,
+ * so the rule lives in one place.
+ *
+ * Only for `/refresh` responses. From any other endpoint a 400 is a
+ * validation error, and treating it as a verdict would sign the user out for
+ * a bad form field.
+ */
+export function isTokenVerdict(status: number): boolean {
+	return status === 401 || status === 400;
+}
+
+/**
  * Sign out. A1.4.
  *
  * Unlike `login`, this one does write the store, because the order is the
@@ -195,10 +211,8 @@ export async function request<T>(
 
 	const refreshed = await refresh(refreshToken);
 	if (!refreshed.ok) {
-		// Only the server's verdict on the token ends the session (decision
-		// 12). A network error or a 500 says nothing about the token, so the
-		// session stands and the caller shows the error.
-		if (refreshed.status === 401 || refreshed.status === 400) signOut(refreshed.error.error);
+		// Otherwise the session stands and the caller shows the error.
+		if (isTokenVerdict(refreshed.status)) signOut(refreshed.error.error);
 		return refreshed;
 	}
 	auth.accessToken = refreshed.data.token;

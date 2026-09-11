@@ -216,14 +216,48 @@ validation and before the new JWT is minted. Nothing else
 in the codebase touches it.
 
 **Ordinary API calls do not advance the sliding window.** Saving a draft for
-ninety minutes straight moves `updated_on` not at all; only the scheduled refresh
-does. This is what makes A1.2's activity gating load-bearing rather than tidy: the
+ninety minutes straight moves `updated_on` not at all. Only a refresh does: the scheduled one, the 401
+path's, or the restore on a hard reload (A1.9), so every reload counts as
+activity. This is what makes A1.2's activity gating load-bearing rather than tidy: the
 refresh is the *only* signal the server has, so gating it on real interaction is
 the entire mechanism by which an abandoned tab eventually dies.
 
 It also means the 2-hour window is measured from **the last refresh**, not the
 last request — a subtlety that matters only if the scheduled refresh is ever made
 conditional on something other than activity.
+
+### A1.9 Restoring the session on load
+
+The access token and the user live in memory, so a hard reload loses both. Only
+the refresh token in `localStorage` survives. The `(app)` layout restores the
+session once, on mount:
+
+1. **If no refresh token is stored, go to `/login` without sending a request.**
+   `HandlerRefresh` validates the body before the lookup, so a blank
+   `refresh_token` is a **400** here, exactly as on `/revoke` (A1.4).
+2. **`POST /refresh`.** It returns `{token}` only, so the user comes from the
+   next call.
+3. **`GET /me`**, through the same wrapper as every other call, so a
+   deactivation between the two calls is handled there. It returns the store's
+   four fields.
+
+| `/refresh` outcome | Meaning | Do |
+|---|---|---|
+| 401 (any A1.7 body) or 400 | A verdict on the token | Clear the store, carry the message, go to `/login` |
+| No response (status 0) or 500 | Says nothing about the token | Keep the token; show the error and a Retry |
+
+Redirecting on a 0 or a 500 would make the user sign in again, which mints a
+second live token and leaves the first valid and orphaned (A1.4a).
+
+⚠️ **Do not redirect on a null `auth.user`.** It is null for a valid session
+until the restore finishes. Gate rendering on it instead:
+- The sidebar renders at once, and the content area shows "Loading…".
+- Pages mount only once the user is set, so no page fetch can run before there
+  is a token to send.
+
+Only a verdict on the token redirects.
+
+The restore's refresh calls `TouchRefreshToken` like any other (A1.8).
 
 ## A2. The save-then-submit contract
 
@@ -576,6 +610,15 @@ active users holding the Approver role.
 
 ## A10. Per-screen notes
 
+### Sidebar
+The same five links for every role: Dashboard, All Change Controls, My Change
+Controls, Approvals and Settings (BRD §2.3.4 and §9.5.1, and all three role
+prototypes). There is no API call behind the sidebar and nothing in it is
+role-conditional. All Change Controls stays active on the CC form, as in every
+`cc-form-*` prototype.
+
+**Sign Out is not in the sidebar.** Every prototype puts it on Settings → Profile.
+
 ### Dashboard
 One call returns everything. **The lists are capped (2, 2, 5); the totals are
 not** — three drafts returns `my_drafts_total: 3` with two items, so the card
@@ -597,8 +640,12 @@ states. Do not build a page per state.
 The pencil and the status toggle are **separate calls** — `PUT /users/{userID}`
 and `PUT /users/{userID}/active`.
 
-Disable the status toggle on your own row (the API returns 400) and hide the role
-selector for yourself (403).
+Disable the status toggle on your own row, and hide the role selector for
+yourself. **Both are 400, not 403:** `Self Deactivation is not allowed` and
+`Self Role Change is not allowed`. The only 403 on these endpoints is
+`requireRole`'s `Forbidden`, for a non-Admin. The self-role check fires only
+when the requested role *differs*, so a body carrying your own current role is a
+200 no-op.
 
 ### Profile
 **Read-only in Phase 1.** No self-update endpoint and no change-password endpoint.
@@ -1060,17 +1107,19 @@ reactivity, so consumers read `auth.user`, never `const { user } = auth`.
 
 The **refresh token** lives in `localStorage`; the **access token** in memory only.
 On app start, attempt one silent refresh to restore a session, then `GET /me` to
-populate the user.
+populate the user. The steps, the outcomes and the failure path are in **A1.9**.
 
-The `(app)/+layout.svelte` guard checks `auth.user` and redirects to `/login` when
-it is null.
+⚠️ The `(app)/+layout.svelte` guard must **not** redirect when `auth.user` is
+null. On a hard reload it is null for a valid session until the restore finishes,
+so that redirect would log out every reload. The guard gates rendering on
+`auth.user` and lets the restore decide.
 
 `auth.user.role` is what the CC form branches on, alongside `cc.current_state`, to
 express the Security Matrix.
 
 ## B9. Build order
 
-Seventeen steps. Each is independently verifiable against the running API — do not
+Eighteen steps. Each is independently verifiable against the running API — do not
 start one until the previous works end to end, and do not merge two because they
 feel contiguous.
 
@@ -1081,12 +1130,13 @@ feel contiguous.
 | 3 | **Login page + auth store + `api.ts`** against the real `POST /login` | Auth works, CORS is configured, the token is stored |
 | 4 | **Authenticated layout** — sidebar, route guard, silent refresh on load | Navigation and session restoration |
 | 5 | **Dashboard** | First data fetch, first `{#each}`, and every list shape in one screen |
-| 6 | **All Change Controls** — filters and pagination via URL params | Query-parameter handling, `total` vs `limit`, offset reset, and `$derived` on URL values |
+| 6 | **All Change Controls and My Change Controls**: one list on two routes. Filters and pagination come from URL params, and `/my-change-controls` presets `owner=me` | Query-parameter handling, `total` vs `limit`, offset reset, and `$derived` on URL values |
 | **7a** | **The CC form, read-only** — fetch a record by `[ccId]` and render all 24 fields as text | The route, the fetch, and the field layout against the prototype. No binding yet |
+| **7a+** | **Create**: the "+ Create Change Control" button (CC Owner only), `POST /changecontrols`, then `goto` the new record | The 201 and the generated CC-ID, and 7a rendering an **all-null** record. Moved out of step 8 at step 4. See below |
 | **7b** | **Bind the fields** — `bind:value` throughout, with the `null` ↔ `''` conversion at both boundaries | Every input type: text, textarea, the eight selects, dates, times |
 | **7c** | **Save Draft** — build a partial body, send it, handle the response | The absent/null/value model, the write-shaped type, RFC 3339 conversion, the 400 `issues` shape |
 | **7d** | **Dirty tracking** — compare current state to the last-loaded record | The gate that step 9 depends on |
-| 8 | **Create + the `Initiated` role views** — `POST /changecontrols`, then the same form as Approver, Viewer and Admin | The Security Matrix as `{#if}` and `disabled`, and **the Viewer's read-only view** |
+| 8 | **The `Initiated` role views**: the same form as Approver, Viewer and Admin | The Security Matrix as `{#if}` and `disabled`, and **the Viewer's read-only view** |
 | 9 | **T2 submit + the e-signature modal** | The first transition end to end, and the save-then-submit gate |
 | 10 | **T3 cancel** | The one modal that collects **a reason *and* credentials together** — unlike every other transition |
 | 11 | **Approver flow** — the queue, and the implementation decision (T4/T5) | The second role, and the first approval gate |
@@ -1105,6 +1155,27 @@ Step 5 exercises every list shape in one screen, which is a cheap way to validat
 24 fields, the partial-update model, two kinds of value conversion, eight selects
 and dirty tracking. Each of 7a–7d is verifiable on its own; the four together are
 not. Do not merge them back.
+
+**Create comes straight after 7a**, not bundled with the role views in step 8.
+Its redirect target is 7a's route, so it cannot come earlier.
+
+Placed there, it gives 7b–7d a fresh record with **every field `null`**:
+- the hardest case for 7b's `null ↔ ''` conversion
+- the cleanest psql check for 7c, since untouched fields must still be `null`
+
+Seeded records cannot be reset: `cmd/seed` creates only the four users. Create
+and the role views share nothing but the word `Initiated`.
+
+It is labelled `7a+` rather than renumbering 7b–7d, because other documents cite
+those numbers.
+
+**My Change Controls is step 6's list with `owner=me` preset.** It uses the
+same endpoint, response shape and pagination, so it is one component on two
+routes rather than a step of its own.
+
+The prototypes' Ownership filter needs a decision at that step. Nothing records
+a creator separately from the owner, so "Created by me" and "Owned by me" are
+the same filter.
 
 Step 9 introduces the signature once, before it appears in five more places.
 

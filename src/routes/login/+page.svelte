@@ -39,7 +39,7 @@
 			return;
 		}
 		startSession(res.data);
-		goto('/');
+		goto('/dashboard');
 	}
 </script>
 

@@ -51,8 +51,9 @@ They match the wire format, narrow inside `{#if}`, and need no conversion.
   boundary string only the browser knows; setting the header by hand omits it and
   the server cannot parse the body. The wrapper must branch on body type
 - On a **401 whose body is `Unauthorized`**: refresh **once**, retry **once**.
-  A 401 or 400 from the refresh clears the store and runs `goto('/login')`. A
-  network error or 500 from the refresh is returned, and the session is kept.
+  A 401 or 400 from the refresh (`isTokenVerdict`) clears the store and runs
+  `goto('/login')`. A network error or 500 from the refresh is returned, and
+  the session is kept.
   Never loop. See "Auth" below for the other 401s
 - Parse **all three** error shapes into the `ErrorBody` union (below), so the
   caller narrows with `'issues' in err` and `'blocked_cc_ids' in err`, two
@@ -131,6 +132,20 @@ and it writes a **second `SignatureFailed` audit row** for one attempt.
 second ends the session with no refresh. Every other 401 goes back to the
 caller. Apply the same rule to the retry's response. This couples the client
 to the wording in `middleware.go`, and it fails safe if that wording changes.
+
+⚠️ **Restoring on load (blueprint A1.9).** A hard reload loses the user and the
+access token, and only the refresh token survives. **Never redirect on a null
+`auth.user`**: it is null for a valid session until the restore finishes, so
+gate rendering on it instead.
+
+The restore itself:
+- If no refresh token is stored, go to `/login` **without** calling `/refresh`.
+  A blank token is a 400 there, as on `/revoke`.
+- Otherwise call `/refresh`, then `GET /me` through `request()`.
+- **`isTokenVerdict(status)`** decides the outcome. A 401 or 400 **from
+  `/refresh` only** ends the session. A 0 or 500 keeps the token and shows a
+  Retry. Never apply the predicate to any other endpoint, where a 400 is a
+  validation error.
 
 `POST /revoke` is idempotent across every **token** state — valid, already
 revoked, never existed — all 204. **But a blank or missing `refresh_token` is a
