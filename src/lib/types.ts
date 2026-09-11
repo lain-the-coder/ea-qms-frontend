@@ -698,7 +698,8 @@ export interface DashboardResponse {
 	overview: DashboardOverview;
 	/**
 	 * Assigned to the caller, in either pending state — so the list mixes gates
-	 * and each row needs its own badge from `current_state`. Max 2 items.
+	 * and each row needs its own badge from `current_state`. Max 2 items: a
+	 * preview, not the Approvals queue (see `ChangeControlListParams.state`).
 	 */
 	pending_approvals: DashboardCCItem[];
 	pending_approvals_total: number;
@@ -742,8 +743,15 @@ export interface ChangeControlListParams {
 	owner?: 'me';
 	/** `me` for records where the caller is the assigned approver. */
 	assigned?: 'me';
-	/** Exact match on ONE state. For "either pending state", use the dashboard's
-	 *  `pending_approvals` block, which is purpose-built for it. */
+	/**
+	 * Exact match on ONE state. A comma list is one string, so it is a 400
+	 * `Invalid state`.
+	 *
+	 * ⚠️ For "either pending state", make one call per state. Do NOT use the
+	 * dashboard's `pending_approvals` block: it is capped at 2 items
+	 * (`dashboardCardItems`), so a queue built from it silently shows at most
+	 * two records.
+	 */
 	state?: State;
 	/**
 	 * ⚠️ `YYYY-MM-DD` — the **opposite** of every date *write* field, which take

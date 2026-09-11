@@ -17,6 +17,7 @@
 	blank page, which would look broken on a slow connection.
 -->
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { isTokenVerdict, refresh, request } from '$lib/api';
@@ -76,10 +77,11 @@
 		}
 	}
 
-	// Mount-only fetch (B3). The effect reads no reactive state: `needsRestore`
-	// is a plain const, and `restore()` reads only localStorage before its
-	// first `await`. So it runs once and never again.
-	$effect(() => {
+	// A mount-only fetch, so `onMount`, not `$effect` (B3). An effect subscribes
+	// to any state it reads before its first `await`, including reads inside
+	// the functions it calls. `onMount` subscribes to nothing, so this runs once
+	// whatever `restore()` comes to read.
+	onMount(() => {
 		if (needsRestore) restore();
 	});
 </script>

@@ -588,8 +588,14 @@ history oldest-first.
 
 - **`?owner=me` and `?assigned=me`** are flags resolved server-side from the
   token. No user ID ever appears in a URL.
-- **`?state=` accepts one value.** For "either pending state", use the dashboard's
-  `pending_approvals` block, which is purpose-built for it.
+- **`?state=` accepts one value.** `q.Get` reads the first, and a comma list is
+  one string, so `A,B` is a 400 `Invalid state`. For "either pending state",
+  make **one call per state**. Filtering an unfiltered `?assigned=me` on the
+  client breaks `total` and pagination.
+  ⚠️ **Not the dashboard's `pending_approvals` block.** It spans both gates but
+  is capped at **2 items** (`dashboardCardItems`). An approver with seven
+  pending records would see two, with no error. Its `pending_approvals_total`
+  is uncapped, so it can show a count but never the queue.
 - **`?search=`** matches CC-ID, change title and owner name only — not
   descriptions, not affected systems.
 - **`?created_after=` / `?created_before=`** are **`YYYY-MM-DD`**, inclusive —
@@ -629,6 +635,12 @@ The five cards link to `?state=<value>`.
 
 `Cancelled` is absent from the counts but can appear in recent activity.
 
+**Overview and recent activity are system-wide.** Every role sees the same
+numbers and the same five rows. Only the two action cards are personal. The
+prototypes imply otherwise in two places: the Admin's empty message ("change
+controls you're involved with") and the owner prototype's comment. The two
+cards and recent activity are all ordered `last_updated_on DESC`.
+
 ### Change control form
 **One form, every state and role.** The Security Matrix decides what is editable,
 read-only or hidden — mirroring how the prototypes are one form in different
@@ -652,9 +664,12 @@ when the requested role *differs*, so a body carrying your own current role is a
 Name, email and role display only.
 
 ### Approvals
-`?assigned=me` returns your records but takes **one** state. The dashboard's
-`pending_approvals` block spans both gates — each item carries its own
-`current_state` for the badge.
+`?assigned=me` returns your records but takes **one** state. For both gates,
+make one `?assigned=me&state=…` call per pending state (A9.2).
+
+⚠️ **The dashboard's `pending_approvals` block is not a substitute.** It spans
+both gates, but it is capped at 2 items, and only `pending_approvals_total` is
+uncapped. A queue built from it shows at most two records, and nothing says so.
 
 ## A11. IDs and names
 
@@ -770,7 +785,19 @@ reason before it appears.
 | `$state` | Local component state, and cross-component state in `.svelte.ts` modules — the auth store |
 | `$derived` | Anything computed from other state. **See the rule below** |
 | `$props` | Component inputs, typed |
-| `$effect` | **Mount-only fetches.** Nothing else |
+| `$effect` | **Not for fetches.** Use `onMount`, below. Its one use is the mount-only redirect at `/`. Nothing else |
+
+⚠️ **Mount-only fetches use `onMount` from `svelte`, not `$effect`.** An effect
+subscribes to every piece of state it reads synchronously, and that includes
+reads inside the functions it calls. `request()` reads `auth.accessToken` before
+its first `await`. So a fetch inside `$effect` refetches whenever the token
+changes:
+- on the 401 path's refresh
+- every 24 minutes, once the scheduled refresh (step 16) exists
+
+There is no error, only extra requests. `onMount` subscribes to nothing, so it
+runs once by construction. The `(app)` layout's restore uses it for the same
+reason.
 
 ⚠️ **`$derived` is mandatory for anything read from the URL.**
 
@@ -792,8 +819,8 @@ remount would leave the page showing the previous record.
 
 ⚠️ **Deriving state inside `$effect` is the classic Svelte 5 anti-pattern.** If a
 value can be computed from other state, it is `$derived`. `$effect` is for
-reaching outside the reactive system — which here means exactly one thing:
-fetching on mount.
+reaching outside the reactive system in response to state. A fetch on mount is
+not a response to state, so it uses `onMount` (above).
 
 ### Template
 
@@ -862,8 +889,9 @@ from the prototype.
   `+page.server.ts`, `+server.ts`, hooks, cookie and session handling. The Go API
   is the backend; anything labelled "server" in the SvelteKit docs does not apply
   here
-- `$effect` for anything beyond load-on-mount. Deriving state in an effect is the
-  classic Svelte 5 anti-pattern — use `$derived`
+- `$effect` for anything beyond the mount-only redirect at `/`. Fetches on mount
+  use `onMount` (B3). Deriving state in an effect is the classic Svelte 5
+  anti-pattern: use `$derived`
 - New CSS tokens, or visual components not present in the prototypes
 
 ## B5. Project structure

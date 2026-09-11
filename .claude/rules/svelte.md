@@ -11,8 +11,15 @@ must be present while writing, not looked up afterwards.
 
 ## Runes
 
-`$state` · `$derived` · `$props` · `$effect` **for mount-only fetches, nothing
-else**.
+`$state` · `$derived` · `$props`. **`$effect` is not for fetches.** Its one use is the
+mount-only redirect at `/`.
+
+⚠️ **Mount-only fetches use `onMount` from `svelte`, never `$effect`.** An effect
+subscribes to every piece of state it reads synchronously, including reads inside
+functions it calls. `request()` reads `auth.accessToken` before its first `await`,
+so a fetch in `$effect` refetches whenever the token changes: on the 401 refresh,
+and every 24 minutes once the scheduled refresh (step 16) exists. `onMount`
+subscribes to nothing. The dashboard and the `(app)` layout's restore both use it.
 
 **Deriving state inside `$effect` is the Svelte 5 anti-pattern.** If a value can be
 computed from other state, it is `$derived`.
