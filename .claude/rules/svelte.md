@@ -21,8 +21,54 @@ so a fetch in `$effect` refetches whenever the token changes: on the 401 refresh
 and every 24 minutes once the scheduled refresh (step 16) exists. `onMount`
 subscribes to nothing. The dashboard and the `(app)` layout's restore both use it.
 
+⚠️ **A fetch that must REPEAT when the URL changes uses `onMount` AND
+`afterNavigate`, deduplicated on the query string.** A filter or page change is a
+navigation *without* a remount, so `onMount` alone never refetches — but
+`afterNavigate` alone does not fire on load in this app:
+
+- `afterNavigate` registers its callback through `onMount`
+  (`client.js:add_navigation_callback`), and SvelteKit dispatches the initial
+  `type: 'enter'` during hydration to whatever is registered **at that moment**.
+- Every page under `(app)` is gated behind `auth.user`, which stays null until
+  the layout's restore resolves `/refresh` and `/me` — long after hydration. So
+  the component is created *after* `'enter'` has been dispatched and never
+  receives it. A hard reload sits on "Loading…" for ever, with no error.
+
+Run both and key on the query string, so the order stops mattering:
+
+```ts
+let lastQuery: string | null = null;
+
+function loadIfChanged() {
+  if (query === lastQuery) return;   // `query` is $derived from the URL
+  lastQuery = query;
+  load(query);
+}
+
+onMount(loadIfChanged);
+afterNavigate(loadIfChanged);
+```
+
+Whichever fires first issues the request; the other is a no-op. `afterNavigate`
+is what catches what a "reload after each `goto`" would miss — **Back and
+Forward**, and the sidebar link tapped while already on that route. Clear
+`lastQuery` on failure so the same URL can be retried. Add a sequence counter
+(`const mine = ++latest`) when requests can overlap, as a debounced search makes
+them. `ChangeControlList.svelte` is the worked example.
+
 **Deriving state inside `$effect` is the Svelte 5 anti-pattern.** If a value can be
 computed from other state, it is `$derived`.
+
+⚠️ **Never name a variable `state`.** It shadows the `$state` rune: `$state(true)`
+is then compiled as a store subscription on your variable, and the errors point
+at the `$state` lines rather than the declaration —
+
+```
+Cannot use 'state' as a store. 'state' needs to be an object with a subscribe method
+```
+
+Use `stateFilter`, `currentState`, `ccState`. The same applies to any name a rune
+starts with — `props`, `derived`, `effect`, `inspect`.
 
 ⚠️ **Anything read from the URL must be `$derived`:**
 

@@ -13,6 +13,7 @@
 	import { onMount } from 'svelte';
 	import { request } from '$lib/api';
 	import { auth } from '$lib/auth.svelte';
+	import { BADGE, formatDateTime } from '$lib/format';
 	import type { DashboardResponse, State } from '$lib/types';
 
 	// The (app) layout mounts this page only once `auth.user` is set, and
@@ -37,18 +38,6 @@
 	// nothing.
 	onMount(load);
 
-	// `Record<State, …>` makes TypeScript demand all six states. No prototype
-	// draws `badge-cancelled`, but global.css defines it, and recent activity
-	// includes cancelled records.
-	const BADGE: Record<State, string> = {
-		Initiated: 'badge-initiated',
-		'Pending Implementation Approval': 'badge-pending-impl',
-		'In Implementation': 'badge-in-implementation',
-		'Pending Final Approval': 'badge-pending-final',
-		Closed: 'badge-closed',
-		Cancelled: 'badge-cancelled'
-	};
-
 	// The Pending Approvals card shortens the two gate names, as the approver
 	// prototype does. Only these two states can appear there (dashboard.sql).
 	const GATE_LABEL: Partial<Record<State, string>> = {
@@ -59,25 +48,11 @@
 	// Typed `State`, so a mistyped state fails `bun run check`. The list
 	// endpoint matches the string exactly, and anything else is a 400.
 	// URLSearchParams encodes a space as `+`, which Go decodes back to a space.
+	//
+	// Stays here rather than moving to `format.ts` with the other two: this is
+	// its only caller. The list builds its own URLs.
 	function stateHref(state: State): string {
 		return '/change-controls?' + new URLSearchParams({ state });
-	}
-
-	// "23 Jan 2026, 9:15 AM", as the prototypes write it, in the browser's own
-	// time zone. en-GB gives that order but lower-cases am/pm, hence the parts.
-	const DATE_TIME = new Intl.DateTimeFormat('en-GB', {
-		day: 'numeric',
-		month: 'short',
-		year: 'numeric',
-		hour: 'numeric',
-		minute: '2-digit',
-		hour12: true
-	});
-
-	function formatDateTime(iso: string): string {
-		return DATE_TIME.formatToParts(new Date(iso))
-			.map((part) => (part.type === 'dayPeriod' ? part.value.toUpperCase() : part.value))
-			.join('');
 	}
 </script>
 

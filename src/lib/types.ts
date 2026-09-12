@@ -738,10 +738,30 @@ export interface DashboardResponse {
 export interface ChangeControlListParams {
 	limit?: number;
 	offset?: number;
-	/** A flag, not a UUID — the server resolves `me` from the token, so no user
-	 *  ID ever appears in a URL. */
+	/**
+	 * A flag, not a UUID — the server resolves `me` from the token, so no user
+	 * ID ever appears in a URL.
+	 *
+	 * ⚠️ The handler tests `q.Get("owner") == "me"` — **exact, and not
+	 * trimmed**. Any other value leaves the filter unapplied and returns the
+	 * UNFILTERED list with `200 OK` and no warning. A screen that presets this
+	 * must set it itself and never read it from the URL, or a hand-edited
+	 * `?owner=<another user's uuid>` silently turns "My Change Controls" into
+	 * everyone's.
+	 *
+	 * Only a **CC Owner** can ever match: create is `requireRole(roleCCOwner)`
+	 * and no UPDATE reassigns `change_owner_id`, so the owner is always the
+	 * creator — which is why no creator is stored separately.
+	 */
 	owner?: 'me';
-	/** `me` for records where the caller is the assigned approver. */
+	/**
+	 * `me` for records where the caller is the assigned approver. Same exact,
+	 * untrimmed, silently-ignored-otherwise rule as `owner`.
+	 *
+	 * Only an **Approver** can ever match: a non-Approver assignee is rejected
+	 * with a 400 when the approver is set. So `owner` and `assigned` are
+	 * disjoint by role, and neither matches for an Admin or a Viewer.
+	 */
 	assigned?: 'me';
 	/**
 	 * Exact match on ONE state. A comma list is one string, so it is a 400
@@ -765,8 +785,16 @@ export interface ChangeControlListParams {
 	/** `YYYY-MM-DD` as `created_after` (`handlers_cc.go:383`). Inclusive of the
 	 *  whole day. */
 	created_before?: string;
-	/** Case-insensitive substring across CC-ID, change title and owner name —
-	 *  not the description or any other field. */
+	/**
+	 * Case-insensitive substring across CC-ID, change title and owner name —
+	 * three columns, not the description, the affected systems or the
+	 * approver's name.
+	 *
+	 * ⚠️ `%` and `_` reach the `ILIKE` pattern unescaped, so `50% capacity`
+	 * matches every record and `CC_001` matches `CC-001` and `CC0001` alike.
+	 * A backend defect (flag 24) — do NOT escape it here, or the frontend
+	 * stops agreeing with every other consumer of the same endpoint.
+	 */
 	search?: string;
 }
 

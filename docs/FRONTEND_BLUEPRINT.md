@@ -571,7 +571,15 @@ history oldest-first.
   200 rows with `200 OK` and nothing saying the value was capped; only `limit < 1`
   or a non-integer is a 400. **So the limit a request asked for is not
   necessarily the limit it got.**
-- **`offset`, not page numbers.** `offset = (page - 1) * limit`.
+- **The exact 400s**, both from `parsePagination`:
+  `invalid limit: must be a positive integer` for a non-integer or `< 1`, and
+  `invalid offset: must be a non-negative integer` for a non-integer or `< 0`.
+  An empty `?limit=` counts as absent and takes the default. **Pagination is
+  parsed before every other parameter**, so `?limit=abc&state=Bogus` returns
+  the limit error alone — only ever one error per response.
+- **`offset`, not page numbers.** `offset = (page - 1) * limit`. There is no
+  ceiling: an offset past the end is `[]` with `200 OK` and the true `total`,
+  not an error.
 - **Reset `offset` to 0 whenever a filter changes**, or the user lands on an empty
   page.
 - **`total` is the count matching the filter**, ignoring pagination — use it for
@@ -588,6 +596,22 @@ history oldest-first.
 
 - **`?owner=me` and `?assigned=me`** are flags resolved server-side from the
   token. No user ID ever appears in a URL.
+  ⚠️ **The handler tests `q.Get("owner") == "me"` — exact, and not trimmed.**
+  Any other value (a UUID, `ME`, a leading space) **leaves the filter
+  unapplied**: the unfiltered list comes back with `200 OK` and no warning
+  anywhere. Same failure mode as `?is_active=` below. So a screen presetting
+  `owner=me` must **set it itself and never read it from the URL**, or a
+  hand-edited `?owner=<someone else's uuid>` turns "My Change Controls" into
+  everyone's, silently. Step 6 does exactly that.
+- ⚠️ **The two are disjoint by role, which is why there is no ownership
+  dropdown.** Only a **CC Owner** can own a record — `POST /changecontrols` is
+  `requireRole(roleCCOwner)`, `requireRole` is exact equality rather than a
+  hierarchy (so not an Admin either), and **no `UPDATE` ever reassigns
+  `change_owner_id`**. The owner is therefore always the creator, which is why
+  no creator is recorded separately and "Created by me" is not a filter that
+  can exist. Only an **Approver** can be assigned one — a non-Approver assignee
+  is a 400 at save time. For every one of the four roles at least one of the
+  two can only ever return zero rows.
 - **`?state=` accepts one value.** `q.Get` reads the first, and a comma list is
   one string, so `A,B` is a 400 `Invalid state`. For "either pending state",
   make **one call per state**. Filtering an unfiltered `?assigned=me` on the
@@ -596,8 +620,16 @@ history oldest-first.
   is capped at **2 items** (`dashboardCardItems`). An approver with seven
   pending records would see two, with no error. Its `pending_approvals_total`
   is uncapped, so it can show a count but never the queue.
-- **`?search=`** matches CC-ID, change title and owner name only — not
-  descriptions, not affected systems.
+- **`?search=`** matches CC-ID, change title and owner name only — **three
+  columns**, not descriptions, not affected systems, not the approver's name.
+  Case-insensitive substring (`ILIKE`). A search box whose placeholder promises
+  more than three fields is wrong; the prototypes' does.
+  ⚠️ **`%` and `_` are not escaped** (backend flag 24). They are `LIKE`
+  metacharacters, so `50% capacity` matches **every** record and `CC_001`
+  matches `CC-001` and `CC0001` alike. Neither looks like a failure — the list
+  just returns the wrong rows. **Do not work around it client-side**: the fix
+  is server-side, and escaping here would make the frontend disagree with
+  Postman, curl and every other consumer.
 - **`?created_after=` / `?created_before=`** are **`YYYY-MM-DD`**, inclusive —
   **not** the RFC 3339 that every date *write* field requires (A5.1). A full
   timestamp is a 400 here, exactly as a bare date is a 400 there. Same API,
@@ -799,6 +831,50 @@ There is no error, only extra requests. `onMount` subscribes to nothing, so it
 runs once by construction. The `(app)` layout's restore uses it for the same
 reason.
 
+⚠️ **A fetch that must REPEAT when the URL changes needs `onMount` *and*
+`afterNavigate`.** This is the list screens, step 6 onwards. Neither is correct
+alone:
+
+- **`onMount` fires once.** A filter or page change is a navigation *without* a
+  remount, so the table would never refetch — the same silent staleness as the
+  `$derived` rule below, one layer up.
+- **`afterNavigate` does not fire on load in this app.** It registers its
+  callback through `onMount` (`client.js:add_navigation_callback`), and
+  SvelteKit dispatches the initial `type: 'enter'` **during hydration**, to
+  whatever is registered at that moment. Every page under `(app)` is gated
+  behind `auth.user`, which stays null until the layout's restore resolves
+  `/refresh` and `/me` — long after hydration. The component is therefore
+  created *after* `'enter'` has been dispatched and never receives it, and a
+  hard reload sits on "Loading…" for ever with nothing in the console.
+
+Run both, keyed on the query string, and the ordering stops mattering:
+
+```ts
+let lastQuery: string | null = null;
+
+function loadIfChanged() {
+  if (query === lastQuery) return;     // `query` is $derived from the URL
+  lastQuery = query;
+  load(query);
+}
+
+onMount(loadIfChanged);
+afterNavigate(loadIfChanged);
+```
+
+Whichever fires first issues the request; the other is a no-op. `afterNavigate`
+earns its place by catching what "reload after each `goto`" would miss: **Back
+and Forward**, and the sidebar link tapped while already on that route. Clear
+`lastQuery` on failure, so the same URL can be retried after an outage without a
+reload. Add a sequence counter where requests can overlap — a debounced search
+makes them overlap routinely.
+
+⚠️ **Never name a variable `state`.** It shadows the `$state` rune, and
+`$state(true)` is then compiled as a store subscription on your variable. The
+errors point at the `$state` lines, not at the declaration, and read
+`Cannot use 'state' as a store`. Use `stateFilter` or `currentState`. The same
+holds for `props`, `derived`, `effect` and `inspect`.
+
 ⚠️ **`$derived` is mandatory for anything read from the URL.**
 
 ```ts
@@ -858,8 +934,9 @@ exactly. See **B6**.
 ### SvelteKit subset
 
 Filesystem routing including dynamic params (`[ccId]`), `+layout.svelte` for the
-root and the authenticated shell, `goto` for programmatic navigation, and
-`page.url.searchParams` for list filters and pagination.
+root and the authenticated shell, `goto` for programmatic navigation,
+`page.url.searchParams` for list filters and pagination, and **`afterNavigate`**
+paired with `onMount` for a fetch that must repeat when the URL changes (above).
 
 ### Deliberately skipped
 
