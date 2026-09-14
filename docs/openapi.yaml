@@ -1967,8 +1967,10 @@ paths:
 
         **Oldest first**, uncapped: a complete history is never truncated.
 
-        An empty array is a legitimate answer — a record in `Initiated` has no
-        signatures, since T1 requires none. Only an unknown CC-ID returns 404.
+        An empty array is a legitimate answer — a record that has never been
+        submitted has no signatures, since T1 requires none. Not every record in
+        `Initiated`: T5 returns a record there carrying its T2 and T5 signatures.
+        Only an unknown CC-ID returns 404.
 
         `signer_name` is the snapshot taken at signing, so renaming a user does
         not rewrite their past signatures.

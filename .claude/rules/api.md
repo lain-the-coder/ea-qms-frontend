@@ -166,6 +166,17 @@ RFC 3339 only. `"2026-10-15"` and `""` are both 400 — **only `null` clears a d
 field**. `TIME` columns return as `0000-01-01T09:00:00Z`; strip the date for
 display, send the same shape back.
 
+⚠️ **Display: slice, never parse** (blueprint A5.5).
+
+| Column | Display |
+|---|---|
+| `DATE` | `iso.slice(0, 10)` |
+| `TIME` | `iso.slice(11, 16)` |
+| `TIMESTAMPTZ` (`created_on`, `*_approval_on`, `actual_closure_date`, `uploaded_on`, `signed_on`) | an instant: `formatDateTime`, in the browser's zone |
+
+- **A DATE must not go through `new Date()`.** Rendered anywhere west of UTC, `new Date('2026-10-25T00:00:00Z')` reads 24 Oct.
+- **The bug cannot be seen from +04:00.** Test it with a timezone override.
+
 ## `null` meets `bind:value`
 
 An input bound to `null` renders the string `"null"`. Convert at the boundaries:

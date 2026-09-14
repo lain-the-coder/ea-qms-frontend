@@ -381,6 +381,23 @@ draft on Monday for work scheduled Wednesday.
 
 **Disable future dates in the picker** so the rule is never hit.
 
+### A5.5 Display: slice dates, format instants
+
+| Column type | Fields | Display |
+|---|---|---|
+| `DATE` | `proposed_implementation_date`, `target_closure_date`, `actual_implementation_date` | `iso.slice(0, 10)` |
+| `TIME` | `implementation_window_start`, `_end` | `iso.slice(11, 16)` |
+| `TIMESTAMPTZ` | `created_on`, `last_updated_on`, `implementation_approval_on`, `final_approval_on`, `actual_closure_date`, `uploaded_on`, `signed_on` | `formatDateTime`, in the browser's zone |
+
+⚠️ **Never pass a DATE through `new Date()`.** A DATE is midnight UTC. In any zone
+west of UTC that instant is still the previous day, so every date on the form
+would read one day early. From a UTC+ zone the bug cannot be seen, so test it with
+a timezone override.
+
+`actual_closure_date` is the odd one out. Despite its name it is a
+`TIMESTAMPTZ`, set to the same instant as `final_approval_on`. TIMESTAMPTZ values
+arrive with the server's offset (`+04:00`), not `Z`.
+
 ## A6. Files
 
 ### A6.0 One upload field, not two
@@ -674,11 +691,58 @@ controls you're involved with") and the owner prototype's comment. The two
 cards and recent activity are all ordered `last_updated_on DESC`.
 
 ### Change control form
-**One form, every state and role.** The Security Matrix decides what is editable,
-read-only or hidden — mirroring how the prototypes are one form in different
-states. Do not build a page per state.
+**One form, every state and role.** Do not build a page per state.
 
-`change_title` can be `null` on a draft; render a placeholder.
+**The Security Matrix decides what is editable.**
+- **Everything else is read-only, as a disabled control**, so enabling a field
+  never means rewriting its markup.
+- **System fields no role can ever edit stay as `.meta-value` text:** CC ID, the
+  approval By and On values, the statuses and Actual Closure Date.
+
+**Nothing is hidden by state.** A field with no value yet renders empty. This
+departs from BRD Rule P5, whose "Not applicable" boxes the prototypes draw as
+`.field-na`.
+- **One exception:** `cancellation_reason` renders only on a Cancelled record,
+  read-only, below Comments (BRD Rule P6).
+- T3's modal writes it; the form never does.
+
+**An asterisk appears only on a field the viewer can edit now AND that the
+transition they are working toward requires:** `editable(field) && mandatory`.
+- **A disabled field never carries one.** So a Viewer, an Admin, or anyone on a
+  Closed or Cancelled record sees none.
+- **It is an instruction to whoever has to act.** This departs deliberately from
+  the prototypes, which star disabled fields.
+
+**Editable and mandatory are different sets.** The owner can edit 24 fields in
+Initiated, but T2 requires 20. T6 does not require `deviations_from_plan`. The
+mandatory sets, confirmed against the Go:
+
+| State | Transition | Required | Source |
+|---|---|---|---|
+| Initiated | T2 | the 24 draft fields **except** both window times, `comments_for_approver` and `comments`: 20 | `HandlerSubmitForImplApproval`'s presence checks |
+| Pending Implementation Approval | T4/T5 | `decision`, `risk_level`, `decision_comments` | `HandlerImplementationDecision`'s body, all three blank-checked |
+| In Implementation | T6 | `actual_implementation_date`, `post_implementation_issues`, `implementation_summary`, `validation_performed`, `implementation_evidence` | `HandlerSubmitForFinalApproval`'s presence checks |
+| Pending Final Approval | T7/T8 | `final_decision`, `final_comments` | `HandlerFinalDecision`'s body |
+| Closed, Cancelled | — | none | |
+
+The form page holds these as `MANDATORY`, a `Record<State, …>`, and `required()`
+combines it with `editable()`. Step 8 implements only `editable()`, and the
+asterisks follow.
+
+`change_title` can be `null` on a draft. The input's placeholder arrives with
+editability.
+
+⚠️ **A rejection's values stay on the record.** T2 and T6 set only the state,
+the status and the updater.
+- **After T5**, an `Initiated` record still shows Decision `Reject`, its Risk
+  Level and its comments, beside a status of `Not Submitted`.
+- **After T8**, Final Decision still reads `Reject`.
+- **The approver reopening either gate** finds their fields pre-filled with the
+  previous rejection.
+
+The Signature History is its own call, `GET /changecontrols/{ccID}/signatures`,
+open to all roles and fetched beside the record. A record that has never been
+submitted has none. One returned to `Initiated` by T5 does.
 
 ### User management
 The pencil and the status toggle are **separate calls** — `PUT /users/{userID}`
@@ -705,7 +769,7 @@ uncapped. A queue built from it shows at most two records, and nothing says so.
 
 ## A11. IDs and names
 
-Every reference comes as a pair:
+**The change-control shapes** carry every user reference as a pair:
 
 ```json
 "change_owner_id": "73960fc2-…",
@@ -713,13 +777,35 @@ Every reference comes as a pair:
 ```
 
 **Compare on the id** — `cc.change_owner_id === currentUser.id` decides whether a
-button renders. Names are not unique and can change.
+button renders. Names are not unique (only `email` is) and can change.
 
 **Display the name.** The client cannot resolve a UUID, and a lookup per record
 would be N+1.
 
-Note `last_updated_by_name` is **not** always the owner — after a rejection it is
-the approver.
+**Not every name has an id.** Two responses carry a name alone, and neither is
+ever compared:
+- `SignatureItem.signer_name`
+- the dashboard's `recent_activity[].last_updated_by_name`
+
+**Two lifetimes.**
+- **The names on a change control are live joins** on `users`. Renaming a user
+  changes them on every record at once.
+- **`signer_name` is a snapshot** taken at signing (BR-8.8.5), and it never
+  changes.
+
+The CC form shows both. After a rename, Signature History carries the old name
+while the Approvals card shows the new one. That is by design, not a stale cache.
+
+**Which names can be null.**
+- **Never null:** `change_owner_name` and `last_updated_by_name` (inner joins on
+  NOT NULL keys).
+- **Null exactly when their id is:** `assigned_approver_name`,
+  `implementation_approval_by_name` and `final_approval_by_name`.
+- The two approval-by pairs are set on **approve only**, by T4 and T7.
+
+**`last_updated_by_name` is not always the owner.** Both saves, the file upload
+and every transition set it to the caller. So after any approver decision (T4,
+T5, T7 or T8) it is the approver.
 
 ## A12. CORS
 
@@ -1236,7 +1322,7 @@ feel contiguous.
 | 4 | **Authenticated layout** — sidebar, route guard, silent refresh on load | Navigation and session restoration |
 | 5 | **Dashboard** | First data fetch, first `{#each}`, and every list shape in one screen |
 | 6 | **All Change Controls and My Change Controls**: one list on two routes. Filters and pagination come from URL params, and `/my-change-controls` presets `owner=me` | Query-parameter handling, `total` vs `limit`, offset reset, and `$derived` on URL values |
-| **7a** | **The CC form, read-only** — fetch a record by `[ccId]` and render all 24 fields as text | The route, the fetch, and the field layout against the prototype. No binding yet |
+| **7a** | **The CC form, read-only**: fetch a record by `[ccId]` **and its signature history**, and render every field as a **disabled control**, with `disabled` coming from one `editable()` that returns false for now. System fields stay text. Amended at step 7a, which replaced "all 24 fields as text" | The route, the fetch, the field layout against the prototype, and date display across time zones (A5.5). No binding yet |
 | **7a+** | **Create**: the "+ Create Change Control" button (CC Owner only), `POST /changecontrols`, then `goto` the new record | The 201 and the generated CC-ID, and 7a rendering an **all-null** record. Moved out of step 8 at step 4. See below |
 | **7b** | **Bind the fields** — `bind:value` throughout, with the `null` ↔ `''` conversion at both boundaries | Every input type: text, textarea, the eight selects, dates, times |
 | **7c** | **Save Draft** — build a partial body, send it, handle the response | The absent/null/value model, the write-shaped type, RFC 3339 conversion, the 400 `issues` shape |
@@ -1246,7 +1332,7 @@ feel contiguous.
 | 10 | **T3 cancel** | The one modal that collects **a reason *and* credentials together** — unlike every other transition |
 | 11 | **Approver flow** — the queue, and the implementation decision (T4/T5) | The second role, and the first approval gate |
 | 12 | **The `In Implementation` view** — save implementation details, then **file upload** | The second save endpoint, then `FormData`, the part named `file`, and the PDF/size limits |
-| 13 | **T6 + the final decision (T7/T8)** + the signature history panel | The remaining gates, and the full state machine exercised |
+| 13 | **T6 + the final decision (T7/T8)**. The signature history panel moved to 7a | The remaining gates, and the full state machine exercised |
 | 14 | **File download** | Blob handling, `Content-Disposition` |
 | 15 | **Admin settings — user management** | **Not a variation of anything else:** inline edit rows, two separate endpoints for the pencil and the toggle, and a 409 carrying `blocked_cc_ids` |
 | 16 | **Activity-gated proactive refresh** | The gating, not just the timer — see A1.2 |

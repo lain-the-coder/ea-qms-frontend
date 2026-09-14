@@ -370,8 +370,9 @@ export interface ChangeControlResponse {
 	current_state: State;
 	change_owner_id: string;
 	change_owner_name: string;
-	/** Whoever last touched the record — not necessarily the owner. After a
-	 *  rejection this is the approver. */
+	/** Whoever last acted on the record — not necessarily the owner. Both saves,
+	 *  the file upload and every transition set it to the caller, so after any
+	 *  approver decision (T4, T5, T7, T8) it is the approver. */
 	last_updated_by_id: string;
 	last_updated_by_name: string;
 	created_on: string;
@@ -430,6 +431,13 @@ export interface ChangeControlResponse {
 	comments_for_approver: string | null;
 
 	// Implementation approval — BRD 37–41
+	/**
+	 * ⚠️ Not cleared by resubmission, and neither are `risk_level` and
+	 * `decision_comments`. T5 writes `Reject`, and T2 sets only the state, the
+	 * status and the updater. So a rejected record back in `Initiated` still
+	 * shows the rejection here while `implementation_approval_status` reads
+	 * `Not Submitted`, and the approver reopening the gate finds it pre-filled.
+	 */
 	decision: Decision | null;
 	risk_level: RiskLevel | null;
 	decision_comments: string | null;
@@ -439,6 +447,11 @@ export interface ChangeControlResponse {
 	implementation_approval_on: string | null;
 
 	// Final approval — BRD 42–45
+	/**
+	 * ⚠️ Not cleared by resubmission, and neither is `final_comments`. After
+	 * T8 a record back in `In Implementation` still reads `Reject` here, and
+	 * T6 does not clear it either.
+	 */
 	final_decision: Decision | null;
 	final_comments: string | null;
 	/** Populated on approve only. */
@@ -634,8 +647,10 @@ export interface SignatureItem {
  * history is never truncated. Sorted **`signed_on` ascending**, oldest first, so
  * the panel reads top-to-bottom in the order things happened. Do not reverse it.
  *
- * An empty array is a legitimate answer — a record in `Initiated` has none,
- * since T1 requires no signature.
+ * An empty array is a legitimate answer. A record that has never been
+ * submitted has none, since T1 requires no signature. ⚠️ Not "a record in
+ * `Initiated`": T5 returns a record to `Initiated` carrying its T2 and T5
+ * signatures (spec defect 16).
  */
 export interface SignatureListResponse {
 	signatures: SignatureItem[];

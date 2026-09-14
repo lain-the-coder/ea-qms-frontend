@@ -139,3 +139,17 @@ Never copy an `<option value>` from a prototype — six of them use en-dashes
 Which fields are editable in a given state for a given role comes from
 `docs/Security_Matrix_V2_1.md`, which lists them per state. That becomes `{#if}`
 and `disabled` — one page for all states and roles, never a page per state.
+
+⚠️ **Asterisks: never copy them from a prototype.** An asterisk appears only when
+**both** of these are true (blueprint A10):
+- the viewer can edit the field now
+- the transition they are working toward requires it
+
+In code that is `required(field) = editable(field) && MANDATORY[current_state].includes(field)`.
+
+- **A disabled field never carries one.** The prototypes star disabled fields, and
+  this departs from them deliberately.
+- **Editable and mandatory are different sets.** 24 fields are editable in
+  Initiated, but T2 requires 20.
+- **The sets are confirmed against the Go.** They are listed in A10 and held once,
+  as `MANDATORY` in the form page. Do not retype them in the markup.
