@@ -7,8 +7,8 @@ once the step has been verified.
 
 ## Status
 
-**Current step:** 7a, the CC form read-only. **Verified, awaiting commit.** Next: step 7a+ (Create)
-**Last verified:** Step 7a. **The timezone check passed:** under a San Francisco override the timestamps moved 11 hours and the three dates did not. See the checkpoint
+**Current step:** 7a+, Create. **Verified, awaiting commit.** Next: step 7b (bind the fields)
+**Last verified:** Step 7a+. A triple-click on Slow 3G sent **one** POST, and a forced 401 retry created **one** record, not two. See the checkpoint
 
 | Step | | Verified by |
 |---|---|---|
@@ -19,7 +19,7 @@ once the step has been verified.
 | 5 · Dashboard | ✅ | Lain: browser, Network tab and psql, across all four roles. Checks 1–8 passed; check 9 (optional) was skipped |
 | 6 · All + My Change Controls | ✅ | Lain: browser, Network tab and psql, across all four roles. **All thirteen checks passed**, the optional one included |
 | 7a · CC form, read-only | ✅ | Lain: browser, Network tab and psql. 11 of 12 checks passed, one only partly (Approver and Viewer not opened separately). The optional rename check was skipped. **The timezone check passed** |
-| 7a+ · Create | ⬜ | Moved out of step 8 (decision 27) |
+| 7a+ · Create | ✅ | Lain: browser, Network tab and psql, across all four roles. **All eight checks passed**, plus `bun run check` and `bun run build` |
 | 7b · Bind the fields | ⬜ | |
 | 7c · Save Draft | ⬜ | |
 | 7d · Dirty tracking | ⬜ | |
@@ -378,6 +378,36 @@ Import direction: page → `api.ts` → `auth.svelte.ts` → `types.ts` (type-on
 - **`dateInput`, `timeInput`, `dateTimeOrDash`, `formatFileSize` and `SIGNATURE_CLASS` are inline in the page**, one caller each. 7b adds flag 5's write direction beside the first two.
 - **`.page-header` has no bottom margin.** The prototypes' gap comes from the banner that always follows it, so the header is wrapped in `.page-header-with-action` (decision 54).
 
+### ✅ Step 7a+ — Create
+
+**Built:**
+- **The Create button is wired in both files that render it**: the dashboard, and `ChangeControlList.svelte`, which serves `/change-controls` and `/my-change-controls`. Each has its own inline `create()`: `POST /changecontrols`, then `goto('/change-controls/' + cc_id)` (decision 59).
+- A synchronous `creating` guard, `disabled={creating}` and a `Creating…` label.
+- A separate `createError` in `.esig-error show` under the header row.
+- No change to `api.ts`, `types.ts` or the `[ccId]` page.
+
+**Rule 7, against the Go (all correct, nothing to amend):**
+- `HandlerCreateChangeControl` reads no body. It inserts the CC and a `Created` audit row in one transaction and returns **201**.
+- The route is `middlewareAuth(requireRole(roleCCOwner, …))`; a wrong role gets 403 `Forbidden`.
+- **`CreateChangeControlResponse`'s eleven fields match the Go struct** by name and type. Only the declaration order differs. The schema defaults (`Initiated`, `Not Submitted` ×2) are members of `State` and `ApprovalStatus`, and `cc_id` is `GENERATED ALWAYS`.
+- **`request()`'s retry cannot double-create.** An `Unauthorized` 401 comes only from `middlewareAuth`, before the handler runs.
+
+**Verified (Lain): all eight checks:**
+- **Dashboard:** one POST, **201** with eleven keys, landing on CC-016. Every control was empty, the state Initiated, both statuses Not Submitted, and there were no signatures. **Three requests in total:** the POST, then 7a's two GETs.
+- **psql:** CC-016 is `Initiated` with a null title, and `change_owner_id = last_updated_by_id` is `t`. **Exactly one `Created` audit row.**
+- **Back:** My Drafts shows CC-016 first, and its total went up.
+- **`/change-controls` and `/my-change-controls`** each created one record.
+- ⚠️ **Double-click:** triple-clicked on Slow 3G. **One POST, and the count went up by exactly one.**
+- **Error path, with the service stopped:** the red error appeared under the header, the dashboard content stayed intact, the button went back to "Create Change Control", and the count was unchanged. After a restart, a click succeeded.
+- ⚠️ **The 401 retry:** after `auth.accessToken = 'x'`, the sequence was POST 401 → `/refresh` 200 → POST 201 → 7a's two GETs. **The count went up by one, not two.**
+- **Approver, Viewer and Admin:** no Create button on any of the three screens.
+- `bun run check`: 184 files, 0 errors, 0 warnings. `bun run build` succeeds.
+
+**Notes for the next session:**
+- ⚠️ **The plan's check 7 was wrong.** "Reload, then click" does not force a 401: the reload runs the restore, which mints a fresh access token. Lain used `auth.accessToken = 'x'` instead, as at step 5. **To force the 401 path on any page, overwrite the token; never reload.** That earlier attempt created one extra record.
+- **Change controls now run to CC-022, and CC-016 onward are all-null Initiated drafts owned by the owner.** They are 7b–7d's material (decision 27).
+- `global.css` has no `.btn:disabled` rule. Any other `.btn` that is disabled during a request needs label feedback the same way.
+
 ---
 
 ## Decisions
@@ -445,6 +475,7 @@ new rows that say what changed and why — the original stays.*
 | 56 | **Placeholders and per-field explanations are deferred to step 8 with a proposed shape** (flag 25), not dropped. Revised during the step at Lain's correction: the plan had recorded them with no shape | The prototype's explanations do real work once an owner sees 24 enabled fields beside 10 disabled ones. **Rejected: recording them as dropped** |
 | 57 | **DATE and TIME are sliced (`slice(0, 10)`, `slice(11, 16)`), never parsed.** TIMESTAMPTZ goes through `formatDateTime` | `new Date('2026-10-25T00:00:00Z')` reads 24 Oct anywhere west of UTC, and that cannot be seen from +04:00. The San Francisco override proved the fix. The rule is now in A5.5 and in the rule file. This is flag 5's read direction |
 | 58 | **An asterisk appears only on a field the viewer can edit now and that the transition they are working toward requires:** `required(field) = editable(field) && MANDATORY[current_state].includes(field)`. Lain's rule. At 7a no label has one | The asterisk is an instruction to whoever has to act. It takes two conditions because the sets differ: 24 fields are editable at T2 but 20 are required, and T6 excludes `deviations_from_plan`. **`MANDATORY` is confirmed in the Go:** T2's 20 presence checks, T4/T5's body (**including `decision_comments`**, where Lain's message had said Decision and Risk Level only), T6's 5 and T7/T8's 2. **It departs deliberately from `cc-form-closed.html`**, which stars most fields. It also replaces the state-and-role pattern I derived from the 13 prototypes, whose T2 group was starred for non-owners and on Cancelled. **Rejected: the prototypes' asterisks**, and **that derived pattern**. **Propagated, at Lain's catch** that it had been recorded here only: the rule and the Go-confirmed sets are in blueprint A10, and a short extract is in `svelte.md`'s Permissions section. That extract loads while step 8 edits the page, and it points at A10 and `MANDATORY` rather than retyping the sets |
+| 59 | **Create is an inline `create()` in each of the two files that render the button.** A synchronous `creating` guard stops a second POST, `disabled={creating}` and a `Creating…` label are the visible half, and the error lives in its own `createError` under the header | **Two files, not three:** both list routes mount `ChangeControlList.svelte`. Each handler is about eight lines, and its `$state` has to live in the component anyway. **The guard, not `disabled`, prevents the duplicate.** It is set before the first `await`, whereas `disabled` depends on the DOM updating before the next click. `creating` stays true on success, so nothing can be clicked between the 201 and the new page. **The label is Lain's call.** `global.css` has no `.btn:disabled`, so a disabled button looks unchanged. It is a loading state, not domain copy. **The error is separate from the page's load `error`**, because that slot replaces the content, and a failed create would otherwise blank a page that loaded. The button markup is now written twice, below the three-copies threshold. **Rejected:** a `createChangeControl()` in `api.ts`, the first endpoint-specific authenticated wrapper, for two callers · reusing the load `error` slot · `alert()` · `disabled` alone |
 
 ---
 
@@ -477,13 +508,14 @@ the two apart, or the real problems get lost among the accepted trade-offs.*
 | 20 | ~~**The prototypes' Ownership filter offers choices the API can't tell apart.**~~ **Closed at step 6 — the control is dropped entirely** (decision 36). The collapse into `owner=me` was the smaller half of it: the two surviving filters are **disjoint by role**, so every role gets at least one option that can only ever return zero rows | Closed |
 | 21 | **Step 11's Approvals queue must not come from the dashboard's `pending_approvals` block**, which is capped at 2. An approver with seven pending records would see two, and never know. Build it from one `?assigned=me&state=…` call per pending state. Filtering an unfiltered `?assigned=me` on the client breaks `total` and pagination | Decide at step 11 how two independently paginated queues are laid out. The prototype `approver/approvals.html` is the starting point |
 | 22 | ~~**Three helpers live inline in the dashboard page.**~~ **Closed at step 6** (decision 46). `BADGE` and `formatDateTime` are in `src/lib/format.ts`; `stateHref` stayed on the dashboard, which is still its only caller | Closed |
-| 23 | **The Create button is a placeholder.** It is disabled, with `title="Available at step 7a+"` (decision 31). **Now in two places** — the dashboard and `ChangeControlList.svelte` — since step 6 | At 7a+: add the `onclick`, and remove both `disabled` and `title`, **in both files** |
+| 23 | ~~**The Create button is a placeholder.** It is disabled, with `title="Available at step 7a+"` (decision 31)~~ **Closed at step 7a+.** Wired in both files, with `disabled` and `title` removed (decision 59) | Closed |
 | 24 | ⚠️ **BACKEND — `search` reaches the `ILIKE` pattern with `%` and `_` unescaped** (`change_controls.sql:70-72` and `:104-106`). sqlc parameterises the value, so there is **no injection** — but both are `LIKE` metacharacters, so searching `50% capacity` matches **every** record and `CC_001` matches `CC-001` and `CC0001` alike. Neither looks like a failure; the list just returns the wrong rows. Found in step 6's rule-7 audit | **Not worked around client-side, deliberately** — escaping in the frontend would make it disagree with Postman, curl and every other consumer of the same endpoint. **The fix is server-side**: escape the pattern, or add an `ESCAPE` clause. Goes to the backend with its next change, like flag 4's spec defects. Recorded in A9.2 and on `ChangeControlListParams.search` so it is not rediscovered as a frontend bug |
 | 25 | **Step 8: why a field is disabled, and placeholders** (decision 56). The proposed shape:<br>- **A `.section-note` per section.** The prototype already has "These fields will become available once the change is approved for implementation".<br>- **A `.field-hint` under a control** where the section note is not enough. It is the same class as "Optional (recommended for IT changes)".<br>- **Never replacing the control.**<br>- **Placeholders on enabled fields only**, with the prototype's text.<br><br>Asterisks are already done (decision 58) | Deferred to step 8, where enabled fields first sit beside disabled ones |
 | 26 | **The approver select must keep the current assignee as an option** once 7b or step 8 loads it from `GET /approvers`. That endpoint returns active approvers only. An approver can be deactivated while assigned to a Closed record, because the 409 covers active records only. Without the option, the select renders blank | Decide at 7b or step 8, whichever loads `/approvers` |
 | 27 | **7c cannot save through disabled inputs, and `editable()` returns false until step 8.** 7b's plan must say which slice of `editable()` it enables first, most likely the owner's 24 fields in Initiated | Decide at 7b |
 | 28 | **The leftover rejection values and defect 16 have not been observed.** No seeded record is in a state that shows them: a read-only query returned 0 rows.<br>- **At step 11, after a T5:** Decision still reads Reject beside Not Submitted, and Signature History is not empty in Initiated.<br>- **At step 13, after a T8:** Final Decision still reads Reject | Carried as a check for steps 11 and 13 |
 | 29 | **Live-join vs snapshot names is reasoned, not observed** (check 12 was skipped). Renaming Default Approver should change every name on the form and none in Signature History | Optional. Run it whenever a rename happens anyway, which will be step 15 at the latest |
+| 30 | **Create can make a duplicate record.** The `creating` guard covers one tab only. **A status 0 or 500 does not prove that nothing was created:** the connection can drop after `tx.Commit()` (CLAUDE.md trap 6). So a user who sees an error and clicks again, or clicks in two tabs, can make two records. The API has no idempotency key. The harm is one stray empty draft, and this is rare | **Accepted, with the message unchanged.** Lain's decision. Wording such as "check My Change Controls before retrying" makes a claim about data state, and it deserves more thought than a passing decision |
 
 ---
 
@@ -581,6 +613,7 @@ code back.*
 | ✅ **B9's 7a row: "render all 24 fields as text"** | Wrong twice over for the settled architecture: the fields are disabled controls, and the response has 55 keys, not 24. The 13 row also carried the signature panel | Both rows amended (decision 49) |
 | ⚠️ **The step brief contradicted four documents on `cancellation_reason`** | The brief said the reason belonged in the modal only. BRD Rule P6, the Security Matrix note, `CC_Field_Reference` #50 and the Cancelled prototype all display it on the Cancelled form. **The documents were right**, and none needs amending | Decision 51 |
 | ⚠️ **REVERSAL · "CC-007's timestamps were edited outside the API". My finding, retracted before it became a flag** | **The mistake.** I compared CC-007's record against an eight-signature history pasted in the brief under CC-007's heading. The history was **CC-005's**: psql matched its first and last `signed_on` to CC-005.<br><br>**The sweep.** A read-only sweep of all 14 records then tested every invariant the Go guarantees:<br>- the state agrees with the last signature<br>- `created_on` precedes the first signature, and `last_updated_on` follows the last<br>- the approval On and By values equal the T4 and T7 signatures<br>- closure equals final approval<br>- the upload falls between T4 and T6<br>- `created_on` follows `cc_number` order<br><br>**All hold on every record.** CC-007 is `T2>T4>T6>T7`, and the record rejected at both gates is CC-005. Lain's check 2 confirmed it in the browser | **No data problem.** **The lesson:** a finding built on pasted evidence is checked against the database before it becomes a flag. Pasted evidence can be mislabelled, and the conclusion inherits the label |
+| ✅ **`CreateChangeControlResponse` and `openapi.yaml`'s `POST /changecontrols`**, audited at step 7a+ against `HandlerCreateChangeControl`, `CreateChangeControl` in `change_controls.sql`, the schema defaults and `main.go` | **Checked and found correct**, recorded so they are not re-investigated:<br>- There is no request body.<br>- **201**, with the eleven fields named and typed as in `types.ts`. Only the order differs.<br>- `Initiated` and `Not Submitted` ×2 come from column defaults. `cc_id` is `GENERATED ALWAYS`.<br>- The 401, 403 and 500 responses match the spec.<br><br>Check 1 confirmed the eleven keys live. Defect 4's fix at step 2 holds | **No change.** The defect count stays at sixteen |
 
 ---
 

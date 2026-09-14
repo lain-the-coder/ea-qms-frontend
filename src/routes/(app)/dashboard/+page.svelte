@@ -11,10 +11,11 @@
 -->
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
 	import { request } from '$lib/api';
 	import { auth } from '$lib/auth.svelte';
 	import { BADGE, formatDateTime } from '$lib/format';
-	import type { DashboardResponse, State } from '$lib/types';
+	import type { CreateChangeControlResponse, DashboardResponse, State } from '$lib/types';
 
 	// The (app) layout mounts this page only once `auth.user` is set, and
 	// removes it when the user is cleared, so the assertion holds.
@@ -37,6 +38,43 @@
 	// minutes once the scheduled refresh exists. `onMount` subscribes to
 	// nothing.
 	onMount(load);
+
+	// ── Create (step 7a+) ───────────────────────────────────────────────────
+	// Its own error, separate from `error` above: that one replaces the page
+	// content, and a failed create must not blank a dashboard that loaded.
+	let creating = $state(false);
+	let createError = $state<string | null>(null);
+
+	/**
+	 * `POST /changecontrols` takes no body and answers 201 with the new record,
+	 * every field null. Then open it.
+	 *
+	 * Every POST makes a permanent record, so a second click must not send a
+	 * second one. The `creating` check does that: it is set before the first
+	 * `await`. `disabled` is only what the user sees, and it depends on the DOM
+	 * having updated before the next click.
+	 *
+	 * `creating` stays true on success, so the button cannot be clicked again
+	 * between the 201 and the new page mounting.
+	 *
+	 * The refresh-and-retry in `request()` cannot create twice. A rejected first
+	 * attempt was stopped by `middlewareAuth` before the handler ran.
+	 */
+	async function create() {
+		if (creating) return;
+		creating = true;
+		createError = null;
+		const res = await request<CreateChangeControlResponse>('POST', '/changecontrols');
+		if (res.ok) {
+			// `cc_id` is the business key in the URL, not `id` (A11).
+			goto(`/change-controls/${res.data.cc_id}`);
+			return;
+		}
+		// ⚠️ A status 0 or 500 does not prove nothing was created. The
+		// connection can drop after the commit (flag 30).
+		createError = res.error.error;
+		creating = false;
+	}
 
 	// The Pending Approvals card shortens the two gate names, as the approver
 	// prototype does. Only these two states can appear there (dashboard.sql).
@@ -64,13 +102,19 @@
 	{#if user.role === 'CC Owner'}
 		<!-- `POST /changecontrols` is CC Owner only (`requireRole` in main.go).
 		     It is a button, not the prototype's link, because Create is a POST
-		     followed by a `goto`. Step 7a+ wires it, and removes `disabled` and
-		     `title`. -->
-		<button type="button" class="btn primary" disabled title="Available at step 7a+">
-			<i class="bi bi-plus-circle"></i> Create Change Control
+		     followed by a `goto`. `global.css` has no `.btn:disabled` rule, so
+		     `disabled` alone looks unchanged; the label is the feedback. -->
+		<button type="button" class="btn primary" disabled={creating} onclick={create}>
+			<i class="bi bi-plus-circle"></i>
+			{creating ? 'Creating…' : 'Create Change Control'}
 		</button>
 	{/if}
 </div>
+
+<!-- Only a CC Owner can set this, because only they see the button. -->
+{#if createError}
+	<div class="esig-error show">{createError}</div>
+{/if}
 
 {#if loading}
 	<p>Loading…</p>

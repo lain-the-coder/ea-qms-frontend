@@ -25,7 +25,11 @@
 	import { request } from '$lib/api';
 	import { auth } from '$lib/auth.svelte';
 	import { BADGE, formatDateTime } from '$lib/format';
-	import { STATES, type ChangeControlListResponse } from '$lib/types';
+	import {
+		STATES,
+		type ChangeControlListResponse,
+		type CreateChangeControlResponse
+	} from '$lib/types';
 
 	let { title, ownerPreset = false }: { title: string; ownerPreset?: boolean } = $props();
 
@@ -225,6 +229,28 @@
 		PAGE_SIZES.includes(limit) ? PAGE_SIZES : [...PAGE_SIZES, limit].sort((a, b) => a - b)
 	);
 
+	// ── Create (step 7a+) ───────────────────────────────────────────────────
+	// The same handler as the dashboard's; the reasoning is there. Its own
+	// error, separate from `error` above, which replaces the table.
+	let creating = $state(false);
+	let createError = $state<string | null>(null);
+
+	async function create() {
+		// Set before the first `await`, so a second click sends no second POST.
+		if (creating) return;
+		creating = true;
+		createError = null;
+		const res = await request<CreateChangeControlResponse>('POST', '/changecontrols');
+		if (res.ok) {
+			// Stays `creating` until the new page mounts. `cc_id`, not `id` (A11).
+			goto(`/change-controls/${res.data.cc_id}`);
+			return;
+		}
+		// ⚠️ A status 0 or 500 does not prove nothing was created (flag 30).
+		createError = res.error.error;
+		creating = false;
+	}
+
 	function goToPage(n: number) {
 		const target = (n - 1) * limit;
 		goto(urlWith({ offset: target === 0 ? null : String(target) }), {
@@ -239,17 +265,22 @@
 		<h1>{title}</h1>
 	</div>
 	{#if user.role === 'CC Owner'}
-		<!-- Decision 31, as on the dashboard: Create is a POST followed by a
-		     `goto`, so it is a button rather than the prototype's link. Step
-		     7a+ wires it and removes `disabled` and `title` — in both places
-		     now. `POST /changecontrols` is `requireRole(roleCCOwner)`, and
-		     `requireRole` is exact equality, so an Admin does not get it
-		     either. -->
-		<button type="button" class="btn primary" disabled title="Available at step 7a+">
-			<i class="bi bi-plus-circle"></i> Create Change Control
+		<!-- As on the dashboard: Create is a POST followed by a `goto`, so it
+		     is a button rather than the prototype's link. `POST
+		     /changecontrols` is `requireRole(roleCCOwner)`, and `requireRole`
+		     is exact equality, so an Admin does not get it either. The label
+		     is the loading feedback: `global.css` has no `.btn:disabled`. -->
+		<button type="button" class="btn primary" disabled={creating} onclick={create}>
+			<i class="bi bi-plus-circle"></i>
+			{creating ? 'Creating…' : 'Create Change Control'}
 		</button>
 	{/if}
 </div>
+
+<!-- Only a CC Owner can set this, because only they see the button. -->
+{#if createError}
+	<div class="esig-error show">{createError}</div>
+{/if}
 
 <!-- The filter bar renders in every state, including the error and empty ones.
      The prototype's empty state replaces the whole card, which would strand a
