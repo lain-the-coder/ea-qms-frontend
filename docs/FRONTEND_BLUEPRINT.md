@@ -1093,10 +1093,30 @@ exactly. See **B6**.
 
 ### SvelteKit subset
 
-Filesystem routing including dynamic params (`[ccId]`), `+layout.svelte` for the
-root and the authenticated shell, `goto` for programmatic navigation,
-`page.url.searchParams` for list filters and pagination, and **`afterNavigate`**
-paired with `onMount` for a fetch that must repeat when the URL changes (above).
+Grouped by job, so each piece has a reason to be here.
+
+- **Routing:** filesystem routes with dynamic params (`[ccId]`), and
+  `+layout.svelte` for the root and the authenticated shell.
+- **Reading the URL:** `page` from `$app/state`, meaning `page.params` and
+  `page.url.searchParams`, always through `$derived`.
+- **Navigating:** `goto`.
+- **Navigation hooks, one job each:**
+  - **`afterNavigate`**, paired with `onMount`, refetches when the URL changes
+    without a remount (above).
+  - **`beforeNavigate`** holds a navigation away from unsaved edits, on the CC
+    form only. It also covers reload and tab close, as `type: 'leave'`,
+    through SvelteKit's own `beforeunload` listener, so no `<svelte:window>`
+    is needed (B4). It asks with `confirm()`, because the callback is
+    synchronous and a styled dialog cannot be awaited in time. For `leave` it
+    only calls `cancel()`, and the browser shows its native dialog.
+    ⚠️ **It returns early when `auth.user` is null.** `request()`'s forced
+    sign-out navigates through the same callbacks, and a prompt there would let
+    the user stay on a form that cannot save. **Every sign-out must clear
+    `auth.user` before it navigates.**
+
+**Not used:** `onNavigate`, `navigating`, `invalidate` and `preloadData`, shallow
+routing, and snapshots. Snapshots restore edits only on history traversal, and
+they would restore them onto a record that may have changed since.
 
 ### Deliberately skipped
 

@@ -56,6 +56,24 @@ Forward**, and the sidebar link tapped while already on that route. Clear
 (`const mine = ++latest`) when requests can overlap, as a debounced search makes
 them. `ChangeControlList.svelte` is the worked example.
 
+⚠️ **`beforeNavigate` is the unsaved-edits guard, on the CC form only** (flag 43).
+- **Return early when `!dirty` or `auth.user === null`.** `request()`'s forced
+  sign-out calls `goto('/login')`, which runs the same callbacks. A prompt there
+  lets the user stay on a form that cannot save.
+- **Every sign-out must clear `auth.user` before it navigates.** That includes
+  step 17's inactivity popup.
+- **For `type: 'leave'`, only `cancel()`.** SvelteKit's `beforeunload` listener
+  then shows the browser's dialog. `confirm()` is blocked there, and no
+  `<svelte:window>` is needed.
+- **Otherwise, `confirm()`.** The callback is synchronous, so a styled dialog
+  cannot answer in time.
+- **Any `goto` added to the form page must be decided against this guard.**
+
+⚠️ **A load that replaces the record clears it first** (`cc = null`, `form = null`).
+Controls outside `{#if loading}` read the record, so stale values keep them live
+during the load, and a `mine = ++latest` check taken after the increment cannot
+tell.
+
 **Deriving state inside `$effect` is the Svelte 5 anti-pattern.** If a value can be
 computed from other state, it is `$derived`.
 

@@ -19,7 +19,8 @@
 	TWO OBJECTS. `cc` is what the server last sent; `form` is what is on
 	screen. Binding straight to `cc` would overwrite the server's version on
 	the first keystroke, and then neither the save body (7c) nor the dirty
-	check (7d) could tell what changed. Only `setRecord()` assigns either.
+	check (7d) could tell what changed. Only `setRecord()` sets either to a
+	record, and only `load()` clears them.
 
 	NOTHING IS HIDDEN BY STATE. A field with no value yet renders empty, where
 	the prototypes draw "Not applicable" boxes (a departure from BRD Rule P5).
@@ -28,7 +29,7 @@
 -->
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { afterNavigate } from '$app/navigation';
+	import { afterNavigate, beforeNavigate } from '$app/navigation';
 	import { page } from '$app/state';
 	import { request } from '$lib/api';
 	import { auth } from '$lib/auth.svelte';
@@ -216,10 +217,11 @@
 	let approversError = $state<string | null>(null);
 
 	/**
-	 * The only place `cc` or `form` is assigned. The fetch and the save
-	 * response both call it. `form` is rebuilt from `cc` every time, whole:
-	 * the server trims text and nulls `''`, so a form that kept its own values
-	 * would disagree with the record after every save.
+	 * The only place `cc` or `form` is set to a record (`load()` only clears
+	 * them). The fetch and the save response both call it. `form` is rebuilt
+	 * from `cc` every time, whole: the server trims text and nulls `''`, so a
+	 * form that kept its own values would disagree with the record after
+	 * every save.
 	 */
 	function setRecord(next: ChangeControlResponse) {
 		cc = next;
@@ -274,6 +276,13 @@
 	async function load(id: string) {
 		const mine = ++latest;
 		loading = true;
+		// While loading there is no record. The action bar sits outside
+		// `{#if loading}`, so an old `cc` would keep Save Draft live against a
+		// record no longer on screen. `saveDraft()`'s `mine` check cannot catch
+		// that, because it reads `latest` after this increment. Cleared, `dirty`
+		// and `canSaveDraft()` are false until `setRecord()` runs.
+		cc = null;
+		form = null;
 		error = null;
 		signaturesError = null;
 		approversError = null;
@@ -339,6 +348,29 @@
 
 	onMount(loadIfChanged);
 	afterNavigate(loadIfChanged);
+
+	/**
+	 * Holds a navigation away from unsaved edits (flag 43).
+	 * - A dead session never prompts. `signOut()` in api.ts clears `auth.user`
+	 *   and then calls `goto('/login')`, which runs these callbacks too, unless
+	 *   the layout has unmounted this page first. Either way this returns.
+	 *   Prompting there would let the user stay on a form that cannot save.
+	 *   The BRD accepts losing unsaved data on timeout (NFR-10.2.5).
+	 * - `leave` (reload, tab close, a typed URL) runs inside `beforeunload`,
+	 *   where `confirm()` is blocked. `cancel()` makes SvelteKit call
+	 *   `preventDefault()`, and the browser shows its own dialog.
+	 * - Everything else runs synchronously here, so `confirm()` can decide.
+	 *   A styled dialog cannot be awaited in time (decision 59 is about
+	 *   reporting, which has an in-page home; this is a question).
+	 */
+	beforeNavigate((navigation) => {
+		if (!dirty || auth.user === null) return;
+		if (navigation.type === 'leave') {
+			navigation.cancel();
+			return;
+		}
+		if (!confirm('Leave this page? Your unsaved changes will be lost.')) navigation.cancel();
+	});
 
 	// ── Display helpers ─────────────────────────────────────────────────────
 	// Inline, with one caller each (decision 46). Blueprint A5.5.
