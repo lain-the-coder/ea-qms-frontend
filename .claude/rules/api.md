@@ -3,6 +3,8 @@ paths:
   - "src/lib/api.ts"
   - "src/lib/types.ts"
   - "src/lib/auth.svelte.ts"
+  - "src/routes/**/*.svelte"
+  - "src/lib/components/*.svelte"
 ---
 
 # API layer conventions
@@ -93,7 +95,9 @@ a cast, in the one place the user must be told the whole request was rejected.
 
 **Four endpoints, not "the transitions":**
 
-- the two save endpoints — keys not editable in the current state
+- the two save endpoints — **only** for keys not editable in the current state.
+  A bad *value* (length, enum, type, assignee) is a plain `ErrorResponse` for the
+  first failing field
 - **T2 and T6 only** — the two *submit* transitions: missing mandatory fields,
   failed date rules, missing evidence
 
@@ -106,6 +110,24 @@ and `HandlerSubmitForFinalApproval` declare an issues array.
 
 `PUT /users/{id}` and `.../active` can return `blocked_cc_ids` on a 409, and the
 request is **all-or-nothing** — do not tell the user the name was saved.
+
+## Saving (blueprint A2, A3)
+
+⚠️ **Send only the fields that changed**, compared through the same function that
+built the form. A whole-form body reverts another tab's save, writing false
+`FieldUpdated` rows on the dates and the approver, and truncates a TIME stored
+with seconds. An empty diff sends nothing: `{}` is a 400.
+
+- ⚠️ **T2 and T6 carry no field values, and silently ignore any they are sent.**
+  No 400 catches a submit of unsaved edits, so Submit must be disabled while the
+  form is dirty. T3, T4/T5 and T7/T8 do carry their own fields.
+- **Lock the form while a save is in flight**, because the response rebuilds
+  `form`. Keep the lock out of the permission check that the asterisks read.
+- **A partly typed date reads `''`.** Check `validity.badInput` on the four date
+  and time inputs and refuse the save, or it clears the stored date.
+- **A save's value errors are plain `ErrorResponse`s for the first failing
+  field.** Every 400 is atomic, audit rows included.
+- **A 409 means the record has left the state: refetch it** (A8.2).
 
 ## Auth
 
@@ -187,12 +209,14 @@ An input bound to `null` renders the string `"null"`. Convert at the boundaries:
 
 ```ts
 const form = $state({ change_title: cc.change_title ?? '' });   // API → form
-change_title: form.change_title.trim() || null                  // form → API
+change_title: form.change_title === '' ? null : form.change_title  // form → API, no trim
 ```
 
 `'' → null` is **load-bearing** on five fields, where `""` is a 400: the four
 dates and times, and `assigned_approver_id`. On the 13 text fields and six enum
 selects it only tidies, because the server trims and nulls `""` itself.
+**Never trim on the client**: Go's `TrimSpace` and JavaScript's `trim()` disagree
+on U+0085 and U+FEFF.
 
 `form` and the record (`cc`) are **two objects**. Only a fetch or a save response
 replaces `cc`, and `form` is rebuilt from it every time, since the server trims.

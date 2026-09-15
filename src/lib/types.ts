@@ -605,8 +605,9 @@ export interface SaveImplementationRequest {
 // ─────────────────────────────────────────────────────────────────────────────
 // Signatures
 //
-// Transitions carry NO field values — they validate what is already stored, so
-// the form must be saved first. Blueprint A2.
+// T2 and T6 carry NO field values — they validate what is already stored, so
+// the form must be saved first, and they silently ignore any field sent beside
+// the credentials. T3, T4/T5 and T7/T8 carry their own fields. Blueprint A2.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**

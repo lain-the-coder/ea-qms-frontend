@@ -117,6 +117,12 @@ Not banned, just not needed. Say so before reaching for one: `bind:group` ·
 spreading · the `{#each}` index · the `style:` directive · component CSS custom
 properties.
 
+**One `style:` use exists** (decision 71): `style:margin-bottom="0"` on the save
+error's `.esig-error` in the form's sticky action bar. The class's modal-stacking
+margin lifts the box in a flex row with `align-items: center`. **Any `.esig-error`
+inside a flex row needs the same cancellation.** Do not remove it as an unneeded
+directive.
+
 **Avoid `:global`** — `global.css` is imported once at the root and applies
 everywhere. Reaching for `:global` usually means the markup drifted from the
 prototype.

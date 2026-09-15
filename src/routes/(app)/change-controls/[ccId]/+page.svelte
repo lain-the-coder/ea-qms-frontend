@@ -1,6 +1,7 @@
 <!--
 	The change-control form (B5): one page for every state and every role.
-	Step 7b binds the owner's 24 draft fields. Nothing is saved yet.
+	Step 7b binds the owner's 24 draft fields, and 7c saves them. Save Draft
+	sends only the fields that differ from the record.
 
 	Markup from docs/prototypes/owner/cc-form-closed.html, the one prototype
 	with every section populated. The other cc-form-* prototypes differ in which
@@ -46,6 +47,7 @@
 		type ListApproversResponse,
 		type DecisionRequest,
 		type ESignatureCredentials,
+		type ErrorBody,
 		type FinalDecisionRequest,
 		type SaveDraftRequest,
 		type SaveImplementationRequest,
@@ -78,33 +80,50 @@
 		| Exclude<keyof FinalDecisionRequest, keyof ESignatureCredentials>;
 
 	/**
-	 * Whether the current user may edit this field of this record in its
-	 * current state. Every control's `disabled` comes from here, so the
-	 * Security Matrix lives in one function rather than in 34 attributes
-	 * (decision 48).
+	 * Whether the current user may save this record's draft: the owner, in
+	 * Initiated. Ownership, not role, exactly as `HandlerSaveDraft` checks it.
+	 * Its 403 compares `change_owner_id` to the caller and has no role check.
+	 * Only a CC Owner can own a record, so a role check would add nothing.
+	 * Compared on the id, never the name (A11).
+	 */
+	function canSaveDraft(): boolean {
+		return (
+			cc !== null &&
+			form !== null &&
+			cc.current_state === 'Initiated' &&
+			cc.change_owner_id === user.id
+		);
+	}
+
+	/**
+	 * PERMISSION: whether the Security Matrix lets the current user edit this
+	 * field of this record in its current state. 7b enables one slice, the
+	 * owner's 24 draft fields in Initiated.
 	 *
-	 * 7b enables one slice: the owner's 24 draft fields in Initiated.
-	 *
-	 * - Ownership, not role, exactly as `HandlerSaveDraft` checks it: its 403
-	 *   compares `change_owner_id` to the caller and has no role check. Only a
-	 *   CC Owner can own a record, so a role check would add nothing. Compared
-	 *   on the id, never the name (A11).
-	 * - `field in form` is the slice. `DraftForm`'s keys are pinned by the type
-	 *   to the 24 of `SaveDraftRequest`, so there is no third list of names.
+	 * `field in form` is the slice. `DraftForm`'s keys are pinned by the type to
+	 * the 24 of `SaveDraftRequest`, so there is no third list of names.
 	 *
 	 * ⚠️ This does not extend. It works only because `DraftForm`'s keys ARE the
 	 * owner's Initiated slice. The approver's gate fields and the owner's five
 	 * In Implementation fields go to other endpoints and need their own form
 	 * objects, so step 8 restructures this per state rather than adding a branch.
 	 */
+	function mayEdit(field: EditableField): boolean {
+		return canSaveDraft() && form !== null && field in form;
+	}
+
+	/**
+	 * Whether the control is enabled right now: permission, and no save in
+	 * flight. Every control's `disabled` comes from here, so the Security
+	 * Matrix lives in one function rather than in 34 attributes (decision 48).
+	 *
+	 * The lock is here and not in `mayEdit` because `required()` reads
+	 * permission. Locking there too would drop every asterisk for the length of
+	 * each save. The lock exists because a save response rebuilds `form`, so a
+	 * keystroke typed mid-save would be lost (flag 32).
+	 */
 	function editable(field: EditableField): boolean {
-		return (
-			cc !== null &&
-			form !== null &&
-			cc.current_state === 'Initiated' &&
-			cc.change_owner_id === user.id &&
-			field in form
-		);
+		return mayEdit(field) && !saving;
 	}
 
 	/**
@@ -165,11 +184,12 @@
 	 * toward requires it. A disabled field never carries one. So a Viewer, an
 	 * Admin, and anyone on a Closed or Cancelled record never see one.
 	 *
-	 * With `editable()` false, no label has one at 7a. The prototypes star
-	 * disabled fields, and this departs from them deliberately.
+	 * The prototypes star disabled fields, and this departs from them
+	 * deliberately. It reads `mayEdit`, not `editable`, so the save lock does
+	 * not remove the asterisks.
 	 */
 	function required(field: EditableField): boolean {
-		return cc !== null && editable(field) && MANDATORY[cc.current_state].includes(field);
+		return cc !== null && mayEdit(field) && MANDATORY[cc.current_state].includes(field);
 	}
 
 	// ── The fetch ───────────────────────────────────────────────────────────
@@ -195,8 +215,8 @@
 	let approversError = $state<string | null>(null);
 
 	/**
-	 * The only place `cc` or `form` is assigned. The fetch calls it, and 7c's
-	 * save response will too. `form` is rebuilt from `cc` every time, whole:
+	 * The only place `cc` or `form` is assigned. The fetch and the save
+	 * response both call it. `form` is rebuilt from `cc` every time, whole:
 	 * the server trims text and nulls `''`, so a form that kept its own values
 	 * would disagree with the record after every save.
 	 */
@@ -304,6 +324,11 @@
 	function loadIfChanged() {
 		if (ccId === lastId) return;
 		lastId = ccId;
+		// A different record: the last one's save message does not apply. This
+		// is cleared here and not in `load()`, because a 409 calls `load()` and
+		// its message has to survive the reload.
+		saveError = null;
+		saveNotice = null;
 		load(ccId);
 	}
 
@@ -328,9 +353,9 @@
 		return iso === null ? '' : iso.slice(11, 16);
 	}
 
-	// The write direction (flag 5), for 7c's save body. Nothing calls these
-	// yet. Plain string building, never `Date`, for the same reason as above.
-	// `''` becomes `null`, because `''` is a 400 on these fields (A5.1).
+	// The write direction (flag 5), called by `toWire` below. Plain string
+	// building, never `Date`, for the same reason as above. `''` becomes
+	// `null`, because `''` is a 400 on these fields (A5.1).
 
 	// "2026-10-25" → "2026-10-25T00:00:00Z", the midnight UTC a DATE arrives as.
 	function dateOutput(value: string): string | null {
@@ -386,6 +411,148 @@
 		T7: 'approved',
 		T8: 'rejected'
 	};
+
+	// ── Save Draft ──────────────────────────────────────────────────────────
+
+	let saving = $state(false);
+	// A failed save, or one blocked before sending. It is kept apart from the
+	// load `error`, which replaces the whole form (decision 59's precedent).
+	let saveError = $state<ErrorBody | null>(null);
+	// The neutral hint beside the button: "Saved …" or "No changes to save".
+	let saveNotice = $state<string | null>(null);
+
+	/**
+	 * The four date and time inputs, keyed by field, which is also each
+	 * input's id. `satisfies` rejects a misspelt key while keeping the values
+	 * typed as `string`.
+	 */
+	const DATE_TIME_LABELS = {
+		proposed_implementation_date: 'Proposed Implementation Date',
+		target_closure_date: 'Target Closure Date',
+		implementation_window_start: 'Implementation Window Start',
+		implementation_window_end: 'Implementation Window End'
+	} satisfies Partial<Record<keyof DraftForm, string>>;
+
+	/**
+	 * The labels of any date or time input holding a partial entry, such as
+	 * `25/10/` with no year (flag 31). The input then reports `value === ''`,
+	 * the same as a deliberately emptied picker, so the body would send `null`
+	 * and clear a stored date. Only `validity.badInput` tells the two apart.
+	 *
+	 * The DOM is read directly, once, at save time. `bind:this` is not on B3's
+	 * list, and an `oninput` tracker would miss a partial entry typed into an
+	 * empty picker, because the value stays `''` and no `input` event fires.
+	 */
+	function incompleteDateTimes(): string[] {
+		const labels: string[] = [];
+		for (const [id, label] of Object.entries(DATE_TIME_LABELS)) {
+			const input = document.getElementById(id) as HTMLInputElement | null;
+			if (input?.validity.badInput) labels.push(label);
+		}
+		return labels;
+	}
+
+	/**
+	 * One form value in the shape the API accepts. `''` becomes `null` for all
+	 * 24 alike. That is load-bearing on the four dates and times and on
+	 * `assigned_approver_id`, where `''` is a 400 (defect 17). On the rest it
+	 * only tidies. No trim: the server trims, and its whitespace set differs
+	 * from JavaScript's.
+	 */
+	function toWire(key: keyof DraftForm, value: string): string | null {
+		if (value === '') return null;
+		switch (key) {
+			case 'proposed_implementation_date':
+			case 'target_closure_date':
+				return dateOutput(value);
+			case 'implementation_window_start':
+			case 'implementation_window_end':
+				return timeOutput(value);
+			default:
+				return value;
+		}
+	}
+
+	/**
+	 * The save body: only the fields where the form differs from the record
+	 * (decision 65). The baseline is built by the same `toDraftForm` that built
+	 * `form`, so the comparison is plain string equality.
+	 *
+	 * Not all 24, for two reasons. A whole-form body sends every untouched
+	 * value back, so a tab loaded before another tab's save reverts that save,
+	 * and on the audited fields it writes `FieldUpdated` rows nobody made. And
+	 * a TIME stored with seconds would come back truncated to `HH:MM:00`.
+	 *
+	 * The keys come from the `toDraftForm` literal, which is exactly the 24 of
+	 * `SaveDraftRequest`, so an unknown key (a 400) cannot be built. The cast is
+	 * for the enum fields: a bound select can only yield `''` or a member of its
+	 * `types.ts` array, and `''` is already `null` here.
+	 */
+	function draftChanges(current: DraftForm, record: ChangeControlResponse): SaveDraftRequest {
+		const baseline = toDraftForm(record);
+		const body: Partial<Record<keyof DraftForm, string | null>> = {};
+		for (const key of Object.keys(baseline) as (keyof DraftForm)[]) {
+			if (current[key] !== baseline[key]) body[key] = toWire(key, current[key]);
+		}
+		return body as SaveDraftRequest;
+	}
+
+	/**
+	 * `PUT /changecontrols/{ccID}`. What each outcome does to `cc` and `form` is
+	 * recorded in PROGRESS.md for 7d:
+	 * - 200: `setRecord`, which rebuilds `form` from the server's copy.
+	 * - 409: refetch, per A8.2, because the record has left Initiated.
+	 * - Anything else: both untouched, so the edits stay on screen.
+	 *
+	 * A 401 never reaches here as its own case, because `request()` refreshes
+	 * and retries.
+	 */
+	async function saveDraft() {
+		if (saving || cc === null || form === null) return;
+		saveError = null;
+		saveNotice = null;
+
+		const incomplete = incompleteDateTimes();
+		if (incomplete.length > 0) {
+			const one = incomplete.length === 1;
+			saveError = {
+				error: `${incomplete.join(', ')} ${one ? 'is' : 'are'} incomplete. Finish or clear ${one ? 'it' : 'them'} before saving.`
+			};
+			return;
+		}
+
+		// An empty body is a 400, `No fields to update`, so nothing is sent.
+		const body = draftChanges(form, cc);
+		if (Object.keys(body).length === 0) {
+			saveNotice = 'No changes to save';
+			return;
+		}
+
+		// Set before the first `await`, so a second click returns above
+		// (decision 59).
+		saving = true;
+		// The lock does not stop navigation. If `load()` runs for another CC-ID
+		// while this is in flight, the response must not land on that record.
+		const mine = latest;
+		const result = await request<ChangeControlResponse>(
+			'PUT',
+			`/changecontrols/${encodeURIComponent(cc.cc_id)}`,
+			body
+		);
+		saving = false;
+		if (mine !== latest) return;
+
+		if (result.ok) {
+			setRecord(result.data);
+			// The client's clock, because a no-op save does not move
+			// `last_updated_on`. The timestamp keeps the hint true after later
+			// typing.
+			saveNotice = `Saved ${formatDateTime(new Date().toISOString())}`;
+		} else {
+			saveError = result.error;
+			if (result.status === 409) load(ccId);
+		}
+	}
 </script>
 
 {#if loading}
@@ -899,7 +1066,7 @@
 			<!-- The value is the id and the label is the name (A11). The options
 			     are `GET /approvers`, plus the current assignee if the list lacks
 			     them (`approverOptions`, flag 26). ⚠️ "Select Approver" is `""`,
-			     which the API rejects for this field: 7c must send `null`. -->
+			     which the API rejects for this field, so `toWire` sends `null`. -->
 			<select
 				id="assigned_approver_id"
 				class="form-control"
@@ -1149,8 +1316,19 @@
 {/if}
 
 <!-- ================== Actions ================== -->
-<!-- Back to List only. Save Draft, Submit, Cancel and the decisions arrive at
-     steps 7c, 9, 10, 11 and 13. -->
+<!-- Back to List and Save Draft. Submit, Cancel and the decisions arrive at
+     steps 9, 10, 11 and 13.
+
+     The save message sits in the bar, beside the button. `.form-actions` is
+     sticky, so the message is visible wherever the user clicked Save; a block
+     above the bar would sit below Signature History. The message is outside
+     the button's `{#if}`, so a 409's error survives the reload that turns
+     the record read-only.
+
+     Save Draft stays on the form (BRD US-CC-02). The prototype's
+     `<a href="my-change-controls.html">` is a static mock, and saving is an
+     action, so it is a `<button>`. `global.css` has no `.btn:disabled`, so
+     the label carries the in-flight state (decision 59). -->
 <div class="form-actions">
 	<div class="actions-left">
 		<a href="/change-controls" class="btn secondary">
@@ -1158,5 +1336,22 @@
 		</a>
 	</div>
 
-	<div class="actions-right"></div>
+	<div class="actions-right">
+		{#if saveError}
+			<!-- A save's `issues` can only list unknown keys, which the body
+			     cannot contain. They are rendered anyway, raw, as A8.1 asks. -->
+			<!-- The class carries a modal-stacking margin that a flex row centres against, lifting the box half of --spacing-lg above the button. -->
+			<div class="esig-error show" style:margin-bottom="0">
+				{saveError.error}{#if 'issues' in saveError}: {saveError.issues.join(', ')}{/if}
+			</div>
+		{:else if saveNotice}
+			<span class="field-hint">{saveNotice}</span>
+		{/if}
+		{#if canSaveDraft()}
+			<button type="button" class="btn secondary" onclick={saveDraft} disabled={saving}>
+				<i class="bi bi-save"></i>
+				{saving ? 'Saving…' : 'Save Draft'}
+			</button>
+		{/if}
+	</div>
 </div>

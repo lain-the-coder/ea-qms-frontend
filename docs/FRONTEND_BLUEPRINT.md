@@ -263,9 +263,12 @@ The restore's refresh calls `TouchRefreshToken` like any other (A1.8).
 
 **The single most important sequencing rule in the API.**
 
-Transitions carry **no field values**. `POST /{ccID}/submit` and
-`POST /{ccID}/submit-final` send only `{email, password}` and validate **what is
-already stored**.
+**The two submit transitions carry no field values.** `POST /{ccID}/submit` (T2)
+and `POST /{ccID}/submit-final` (T6) send only `{email, password}` and validate
+**what is already stored**. The other transitions do carry values, which their
+own body writes: T3 `cancellation_reason`; T4/T5 `decision`, `risk_level` and
+`decision_comments`; T7/T8 `final_decision` and `final_comments`. Nothing is saved
+beforehand for those.
 
 ```
 User edits the form
@@ -285,11 +288,24 @@ This applies to **both** save endpoints:
 | `Initiated` | `PUT /{ccID}` — 24 fields | `POST /{ccID}/submit` |
 | `In Implementation` | `PUT /{ccID}/implementation` — 5 fields | `POST /{ccID}/submit-final` |
 
+⚠️ **Field values sent to a submit are silently ignored.** Both submit handlers
+decode into a two-field struct with no `DisallowUnknownFields`. A body carrying
+`change_title` beside the credentials is therefore not a 400: the key is dropped,
+and the transition validates the stored value. Nothing on the server catches a
+submit of unsaved edits, so the client's dirty gate is the only guard.
+
+**Saves and transitions cannot interleave.** Every writer to `change_controls` (both
+saves, all five transitions and the file upload) opens a transaction and takes
+`SELECT … FOR UPDATE` on the row before checking its state. A save racing a submit
+either commits first, and the submit validates the saved values, or it waits and
+gets a 409, because the state has moved.
+
 ### A2.1 Where validation happens
 
 | Check | Save | Transition |
 |---|---|---|
 | Length, enum membership, JSON type | ✅ | ❌ |
+| Assignee exists, is active and holds the Approver role | ✅ (400) | ❌ (presence only) |
 | Presence of mandatory fields | ❌ | ✅ |
 | Business-day date rules | ❌ | ✅ |
 | `actual_implementation_date` not in the future | ❌ | ✅ |
@@ -324,8 +340,25 @@ send `null`, and so must the approver select, whose "Select Approver" option has
 **400** listing every offending key, and **nothing is written** — the rejection is
 atomic, so a valid field sent alongside an invalid key is not saved either.
 
-Sending the whole form on every save is fine; sending only what changed is fine.
-Unchanged values write no audit row either way.
+**Send only the fields that changed** (decided at step 7c). The server's own rule,
+that a value equal to the stored one writes nothing, makes a whole-form body look
+safe. It is not, for two reasons, both observed:
+- **It reverts another tab's save.** A tab loaded before another tab saved sends
+  the old values back. On the audited fields (the two dates and the approver) it
+  also writes a `FieldUpdated` row recording a change nobody made.
+- **Not every value round-trips.** The time input holds `HH:MM`, so a TIME stored
+  with seconds by another client (`0000-01-01T11:00:15Z`) goes back as `11:00:00`,
+  with a 200.
+
+Build the body by comparing the form to the record through the same conversion
+that built the form, so the comparison is plain string equality. An empty diff
+sends nothing, because `{}` is a 400. A diff does not prevent a lost update on the
+*same* field across tabs. The API has no version check.
+
+**How "absent means unchanged" is implemented:** not by the query.
+`UpdateChangeControlDraft` assigns all 24 columns unconditionally. The handler
+seeds every parameter from the row it locked, each present key overwrites only
+its own, and the `UPDATE` runs only when some value differs.
 
 **Also true of `PUT /{ccID}`**, audited against `HandlerSaveDraft`:
 - **An empty body `{}` is a 400**, `No fields to update`.
@@ -339,6 +372,17 @@ Unchanged values write no audit row either way.
 - **A save that changes nothing is still 200** and returns the record, and
   `last_updated_on` does not move. The response is re-read inside the
   transaction, so it is identical to `GET`.
+- **Value errors stop at the first failing field**, in the handler's field order.
+  Each comes back as a plain `ErrorResponse` naming the field in prose (`Change
+  Title must be 200 characters or fewer`). Length, enum, JSON type and the assignee
+  check all behave this way. Only unknown keys produce `issues`.
+- **Every 400 is atomic, audit rows included.** Each error returns before the
+  commit, so an audit row that an earlier field already inserted is rolled back
+  with everything else.
+- **A partly typed date reads as empty.** `<input type="date">` reports
+  `value === ''` for `25/10/`, the same as a cleared picker, so a save would send
+  `null` and clear the stored date. Check `input.validity.badInput` on the date
+  and time inputs, and refuse the save.
 
 ## A4. The en-dash trap
 
@@ -536,7 +580,9 @@ knows what they are attesting to. **ASCII hyphens** — see A4.
 
 The second comes from **four endpoints**, not from "the transitions":
 
-- the two save endpoints — keys not editable in the current state
+- the two save endpoints — **only** for keys not editable in the current state.
+  A bad *value* (length, enum, type, assignee) is a plain `ErrorResponse` for the
+  first failing field
 - **T2 and T6 only** — the two *submit* transitions: missing mandatory fields,
   failed date rules, missing evidence, **all collected**
 
@@ -1057,6 +1103,13 @@ say so rather than reaching for it silently.
 event-handler spreading · the `{#each}` index parameter · the `style:` directive ·
 component CSS custom properties.
 
+**One `style:` use exists, and it cancels rather than adds** (decision 71):
+`style:margin-bottom="0"` on the save error in the form's sticky action bar.
+`.esig-error`'s `margin-bottom` spaces it inside the e-signature modal. A flex row
+with `align-items: center` centres against that margin, lifting the box half of
+`--spacing-lg` above the button. Any `.esig-error` placed inside a flex row needs
+the same cancellation.
+
 **Avoid `:global`** — `global.css` is imported once at the root and its classes
 apply everywhere already, so a `:global` escape hatch is a sign the markup drifted
 from the prototype.
@@ -1191,8 +1244,8 @@ Read the two together against A3:
 `ChangeControlResponse` / `SaveDraftRequest`, and `ChangeControlResponse` /
 `SaveImplementationRequest`.
 
-Transitions need no write type beyond their credentials, since they carry no field
-values (A2).
+T2 and T6 need no write type beyond their credentials, since they carry no field
+values (A2). T3, T4/T5 and T7/T8 carry their own fields beside the credentials.
 
 ### `null` meets `bind:value`
 
@@ -1203,14 +1256,15 @@ not in the markup:
 // API → form
 const form = $state({ change_title: cc.change_title ?? '' });
 
-// form → API, on save
-change_title: form.change_title.trim() || null
+// form → API, on save: '' → null, and no trim
+change_title: form.change_title === '' ? null : form.change_title
 ```
 
-`|| null` turns an emptied box back into a clear instruction, which matches A3 —
-and the API normalises `""` to `null` for text and enum fields anyway. **Date and
-time fields, and `assigned_approver_id`, must send `null`**, since `""` is a parse
-error there (A3, A5.1).
+`'' → null` turns an emptied box back into a clear instruction, which matches A3.
+**Date and time fields, and `assigned_approver_id`, must send `null`**, since `""`
+is a parse error there (A3, A5.1). On text and enum fields the API normalises `""`
+to `null` anyway. **Do not trim on the client.** The server trims, and Go's
+`TrimSpace` and JavaScript's `trim()` disagree on U+0085 and U+FEFF.
 
 **Keep the record and the form as two objects.** `cc` holds what the server last
 sent, and `form` holds what is on screen. Only a fetch or a save response
@@ -1356,7 +1410,7 @@ feel contiguous.
 | **7a** | **The CC form, read-only**: fetch a record by `[ccId]` **and its signature history**, and render every field as a **disabled control**, with `disabled` coming from one `editable()` that returns false for now. System fields stay text. Amended at step 7a, which replaced "all 24 fields as text" | The route, the fetch, the field layout against the prototype, and date display across time zones (A5.5). No binding yet |
 | **7a+** | **Create**: the "+ Create Change Control" button (CC Owner only), `POST /changecontrols`, then `goto` the new record | The 201 and the generated CC-ID, and 7a rendering an **all-null** record. Moved out of step 8 at step 4. See below |
 | **7b** | **Bind the fields** — `bind:value` throughout, with the `null` ↔ `''` conversion at both boundaries | Every input type in the owner's Initiated slice: text, textarea, the six enum selects, the approver select from `GET /approvers`, dates, times. Amended at 7b: the page has eleven selects, seven of them in that slice |
-| **7c** | **Save Draft** — build a partial body, send it, handle the response | The absent/null/value model, the write-shaped type, RFC 3339 conversion, the 400 `issues` shape |
+| **7c** | **Save Draft** — send only the changed fields, and handle the response | The absent/null/value model, the write-shaped type, RFC 3339 conversion, and the plain 400. Amended at 7c: a save's `issues` lists only unknown keys, which a body built from `SaveDraftRequest`'s keys cannot contain |
 | **7d** | **Dirty tracking** — compare current state to the last-loaded record | The gate that step 9 depends on |
 | 8 | **The `Initiated` role views**: the same form as Approver, Viewer and Admin | The Security Matrix as `{#if}` and `disabled`, and **the Viewer's read-only view** |
 | 9 | **T2 submit + the e-signature modal** | The first transition end to end, and the save-then-submit gate |
