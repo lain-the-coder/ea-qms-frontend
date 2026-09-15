@@ -1,17 +1,23 @@
 <!--
 	The change-control form (B5): one page for every state and every role.
-	Step 7a renders it read-only.
+	Step 7b binds the owner's 24 draft fields. Nothing is saved yet.
 
 	Markup from docs/prototypes/owner/cc-form-closed.html, the one prototype
 	with every section populated. The other cc-form-* prototypes differ in which
 	controls are enabled, in their info banner and in their action buttons.
 
 	READ-ONLY MEANS `disabled`, NOT TEXT. Every field the Security Matrix can
-	make editable is a real control, disabled through `editable()`. Step 7b
-	turns `value=` into `bind:value=` and step 8 fills in `editable()`, so
-	neither has to rewrite the markup. The thirteen system fields are never
-	editable by anyone (CC ID, the approval By/On values, the statuses…), so
-	they stay as the prototype's `.meta-value` text.
+	make editable is a real control, disabled through `editable()`, so enabling
+	one never rewrites the markup. The 24 draft fields are `bind:value` on
+	`form`. The other ten still take `value=` from `cc`: they belong to other
+	endpoints and bind when their own state's step lands. The thirteen system
+	fields are never editable by anyone (CC ID, the approval By/On values, the
+	statuses…), so they stay as the prototype's `.meta-value` text.
+
+	TWO OBJECTS. `cc` is what the server last sent; `form` is what is on
+	screen. Binding straight to `cc` would overwrite the server's version on
+	the first keystroke, and then neither the save body (7c) nor the dirty
+	check (7d) could tell what changed. Only `setRecord()` assigns either.
 
 	NOTHING IS HIDDEN BY STATE. A field with no value yet renders empty, where
 	the prototypes draw "Not applicable" boxes (a departure from BRD Rule P5).
@@ -23,6 +29,7 @@
 	import { afterNavigate } from '$app/navigation';
 	import { page } from '$app/state';
 	import { request } from '$lib/api';
+	import { auth } from '$lib/auth.svelte';
 	import { formatDateTime } from '$lib/format';
 	import {
 		CHANGE_CATEGORIES,
@@ -34,7 +41,9 @@
 		REQUIRES_TESTING,
 		REQUIRES_TRAINING,
 		RISK_LEVELS,
+		type ApproverRef,
 		type ChangeControlResponse,
+		type ListApproversResponse,
 		type DecisionRequest,
 		type ESignatureCredentials,
 		type FinalDecisionRequest,
@@ -74,13 +83,28 @@
 	 * Security Matrix lives in one function rather than in 34 attributes
 	 * (decision 48).
 	 *
-	 * Always false at 7a. It takes only the field. The role, the state and the
-	 * ownership comparison (`change_owner_id` against `auth.user.id`, never the
-	 * name, A11) are read from component scope when it is implemented, so no
-	 * call site changes.
+	 * 7b enables one slice: the owner's 24 draft fields in Initiated.
+	 *
+	 * - Ownership, not role, exactly as `HandlerSaveDraft` checks it: its 403
+	 *   compares `change_owner_id` to the caller and has no role check. Only a
+	 *   CC Owner can own a record, so a role check would add nothing. Compared
+	 *   on the id, never the name (A11).
+	 * - `field in form` is the slice. `DraftForm`'s keys are pinned by the type
+	 *   to the 24 of `SaveDraftRequest`, so there is no third list of names.
+	 *
+	 * ⚠️ This does not extend. It works only because `DraftForm`'s keys ARE the
+	 * owner's Initiated slice. The approver's gate fields and the owner's five
+	 * In Implementation fields go to other endpoints and need their own form
+	 * objects, so step 8 restructures this per state rather than adding a branch.
 	 */
-	function editable(_field: EditableField): boolean {
-		return false;
+	function editable(field: EditableField): boolean {
+		return (
+			cc !== null &&
+			form !== null &&
+			cc.current_state === 'Initiated' &&
+			cc.change_owner_id === user.id &&
+			field in form
+		);
 	}
 
 	/**
@@ -150,11 +174,73 @@
 
 	// ── The fetch ───────────────────────────────────────────────────────────
 
+	// Pages under `(app)` mount only once the restore has set the user (step 4).
+	const user = $derived(auth.user!);
+
+	/**
+	 * What is on screen for the owner's 24 draft fields: every value a string,
+	 * `''` for null, because an input bound to `null` renders "null" (B6).
+	 * `Record<keyof SaveDraftRequest, …>` holds it to exactly those 24 keys, so
+	 * a save body built from it can never carry a key the API rejects.
+	 */
+	type DraftForm = Record<keyof SaveDraftRequest, string>;
+
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 	let cc = $state<ChangeControlResponse | null>(null);
+	let form = $state<DraftForm | null>(null);
 	let signatures = $state<SignatureItem[]>([]);
 	let signaturesError = $state<string | null>(null);
+	let approvers = $state<ApproverRef[]>([]);
+	let approversError = $state<string | null>(null);
+
+	/**
+	 * The only place `cc` or `form` is assigned. The fetch calls it, and 7c's
+	 * save response will too. `form` is rebuilt from `cc` every time, whole:
+	 * the server trims text and nulls `''`, so a form that kept its own values
+	 * would disagree with the record after every save.
+	 */
+	function setRecord(next: ChangeControlResponse) {
+		cc = next;
+		form = toDraftForm(next);
+	}
+
+	/**
+	 * Every value is a copied string, so `form` shares no reference with `cc`,
+	 * and typing can never reach the server's copy.
+	 *
+	 * An object literal, never a spread of `r`. TypeScript's excess-property
+	 * check applies to literals only, so a spread would let the other 31
+	 * response keys in without an error.
+	 */
+	function toDraftForm(r: ChangeControlResponse): DraftForm {
+		return {
+			change_title: r.change_title ?? '',
+			change_description: r.change_description ?? '',
+			change_type: r.change_type ?? '',
+			change_category: r.change_category ?? '',
+			department_function: r.department_function ?? '',
+			affected_systems_modules: r.affected_systems_modules ?? '',
+			proposed_implementation_date: dateInput(r.proposed_implementation_date),
+			target_closure_date: dateInput(r.target_closure_date),
+			implementation_window_start: timeInput(r.implementation_window_start),
+			implementation_window_end: timeInput(r.implementation_window_end),
+			reason_for_change: r.reason_for_change ?? '',
+			business_impact: r.business_impact ?? '',
+			expected_downtime: r.expected_downtime ?? '',
+			requires_testing: r.requires_testing ?? '',
+			requires_training: r.requires_training ?? '',
+			risk_rationale: r.risk_rationale ?? '',
+			key_risks_mitigations: r.key_risks_mitigations ?? '',
+			high_level_implementation_plan: r.high_level_implementation_plan ?? '',
+			validation_approach: r.validation_approach ?? '',
+			success_criteria: r.success_criteria ?? '',
+			rollback_backout_plan: r.rollback_backout_plan ?? '',
+			assigned_approver_id: r.assigned_approver_id ?? '',
+			comments_for_approver: r.comments_for_approver ?? '',
+			comments: r.comments ?? ''
+		};
+	}
 
 	// Only the newest request may write the state, should a navigation to a
 	// different CC-ID overlap a slow one.
@@ -165,19 +251,26 @@
 		loading = true;
 		error = null;
 		signaturesError = null;
+		approversError = null;
 		const path = `/changecontrols/${encodeURIComponent(id)}`;
-		// Two independent reads, in parallel. The signature history is its own
-		// endpoint, so it can fail on its own, and then only its card shows the
-		// error.
-		const [record, history] = await Promise.all([
+		// Three independent reads, in parallel. The signature history and the
+		// approver list are their own endpoints, so each can fail on its own and
+		// show its error in place.
+		//
+		// The approver list is fetched on every load, not only when the select
+		// is editable. Editability depends on the record, so a conditional fetch
+		// would have to wait for it, and its condition would copy `editable()`.
+		const [record, history, approverList] = await Promise.all([
 			request<ChangeControlResponse>('GET', path),
-			request<SignatureListResponse>('GET', `${path}/signatures`)
+			request<SignatureListResponse>('GET', `${path}/signatures`),
+			request<ListApproversResponse>('GET', '/approvers')
 		]);
 		if (mine !== latest) return;
 		if (record.ok) {
-			cc = record.data;
+			setRecord(record.data);
 		} else {
 			cc = null;
+			form = null;
 			error = record.error.error;
 		}
 		if (history.ok) {
@@ -186,9 +279,15 @@
 			signatures = [];
 			signaturesError = history.error.error;
 		}
+		if (approverList.ok) {
+			approvers = approverList.data.approvers;
+		} else {
+			approvers = [];
+			approversError = approverList.error.error;
+		}
 		// A failed load is not "already loaded", so the next navigation to the
 		// same CC-ID tries again (step 6's recovery pattern).
-		if (!record.ok || !history.ok) lastId = null;
+		if (!record.ok || !history.ok || !approverList.ok) lastId = null;
 		loading = false;
 	}
 
@@ -229,6 +328,36 @@
 		return iso === null ? '' : iso.slice(11, 16);
 	}
 
+	// The write direction (flag 5), for 7c's save body. Nothing calls these
+	// yet. Plain string building, never `Date`, for the same reason as above.
+	// `''` becomes `null`, because `''` is a 400 on these fields (A5.1).
+
+	// "2026-10-25" → "2026-10-25T00:00:00Z", the midnight UTC a DATE arrives as.
+	function dateOutput(value: string): string | null {
+		return value === '' ? null : `${value}T00:00:00Z`;
+	}
+
+	// "09:30" → "0000-01-01T09:30:00Z", the placeholder shape a TIME arrives in
+	// (A5.2). This relies on the input having no `step`, which keeps it `HH:MM`.
+	function timeOutput(value: string): string | null {
+		return value === '' ? null : `0000-01-01T${value}:00Z`;
+	}
+
+	/**
+	 * The approver select's options: `GET /approvers`, plus the current
+	 * assignee when the list lacks them (flag 26). The list holds active
+	 * approvers only, and an approver can be deactivated once no active record
+	 * names them. So this happens on Closed and Cancelled records, whose select
+	 * is disabled. Never on an Initiated one, where the deactivation is a 409.
+	 * Without it, that select would render blank. Compared on the id (A11).
+	 */
+	function approverOptions(list: ApproverRef[], r: ChangeControlResponse): ApproverRef[] {
+		const id = r.assigned_approver_id;
+		if (id === null || list.some((a) => a.id === id)) return list;
+		// The name is a LEFT JOIN on the id, so it is non-null exactly when the id is.
+		return [...list, { id, full_name: r.assigned_approver_name! }];
+	}
+
 	// A TIMESTAMPTZ is an instant, so it is formatted in the browser's zone
 	// (decision 35). Null shows "—", as the prototypes do.
 	function dateTimeOrDash(iso: string | null): string {
@@ -261,7 +390,7 @@
 
 {#if loading}
 	<p>Loading…</p>
-{:else if cc}
+{:else if cc && form}
 	<!-- Every cc-form prototype uses `.page-header`, which has no bottom margin.
 	     The prototypes get their gap from the info banner that always follows
 	     it (`.info-banner` has `margin: var(--spacing-xl) 0`). This page renders
@@ -352,7 +481,7 @@
 				id="change_title"
 				class="form-control"
 				disabled={!editable('change_title')}
-				value={cc.change_title ?? ''}
+				bind:value={form.change_title}
 			/>
 		</div>
 
@@ -365,7 +494,7 @@
 				class="form-control"
 				rows="4"
 				disabled={!editable('change_description')}
-				value={cc.change_description ?? ''}
+				bind:value={form.change_description}
 			></textarea>
 		</div>
 
@@ -378,7 +507,7 @@
 					id="change_type"
 					class="form-control"
 					disabled={!editable('change_type')}
-					value={cc.change_type ?? ''}
+					bind:value={form.change_type}
 				>
 					<option value="">Select type</option>
 					{#each CHANGE_TYPES as option}
@@ -395,7 +524,7 @@
 					id="change_category"
 					class="form-control"
 					disabled={!editable('change_category')}
-					value={cc.change_category ?? ''}
+					bind:value={form.change_category}
 				>
 					<option value="">Select category</option>
 					{#each CHANGE_CATEGORIES as option}
@@ -412,7 +541,7 @@
 					id="department_function"
 					class="form-control"
 					disabled={!editable('department_function')}
-					value={cc.department_function ?? ''}
+					bind:value={form.department_function}
 				>
 					<option value="">Select department</option>
 					{#each DEPARTMENT_FUNCTIONS as option}
@@ -431,7 +560,7 @@
 				id="affected_systems_modules"
 				class="form-control"
 				disabled={!editable('affected_systems_modules')}
-				value={cc.affected_systems_modules ?? ''}
+				bind:value={form.affected_systems_modules}
 			/>
 		</div>
 
@@ -447,7 +576,7 @@
 					id="proposed_implementation_date"
 					class="form-control"
 					disabled={!editable('proposed_implementation_date')}
-					value={dateInput(cc.proposed_implementation_date)}
+					bind:value={form.proposed_implementation_date}
 				/>
 			</div>
 
@@ -460,7 +589,7 @@
 					id="target_closure_date"
 					class="form-control"
 					disabled={!editable('target_closure_date')}
-					value={dateInput(cc.target_closure_date)}
+					bind:value={form.target_closure_date}
 				/>
 			</div>
 		</div>
@@ -473,7 +602,7 @@
 					id="implementation_window_start"
 					class="form-control"
 					disabled={!editable('implementation_window_start')}
-					value={timeInput(cc.implementation_window_start)}
+					bind:value={form.implementation_window_start}
 				/>
 				<div class="field-hint">Optional (recommended for IT changes)</div>
 			</div>
@@ -485,7 +614,7 @@
 					id="implementation_window_end"
 					class="form-control"
 					disabled={!editable('implementation_window_end')}
-					value={timeInput(cc.implementation_window_end)}
+					bind:value={form.implementation_window_end}
 				/>
 				<div class="field-hint">Optional (recommended for IT changes)</div>
 			</div>
@@ -505,7 +634,7 @@
 				class="form-control"
 				rows="3"
 				disabled={!editable('reason_for_change')}
-				value={cc.reason_for_change ?? ''}
+				bind:value={form.reason_for_change}
 			></textarea>
 		</div>
 
@@ -518,7 +647,7 @@
 				class="form-control"
 				rows="3"
 				disabled={!editable('business_impact')}
-				value={cc.business_impact ?? ''}
+				bind:value={form.business_impact}
 			></textarea>
 		</div>
 
@@ -531,7 +660,7 @@
 					id="expected_downtime"
 					class="form-control"
 					disabled={!editable('expected_downtime')}
-					value={cc.expected_downtime ?? ''}
+					bind:value={form.expected_downtime}
 				>
 					<option value="">Select</option>
 					{#each EXPECTED_DOWNTIME as option}
@@ -548,7 +677,7 @@
 					id="requires_testing"
 					class="form-control"
 					disabled={!editable('requires_testing')}
-					value={cc.requires_testing ?? ''}
+					bind:value={form.requires_testing}
 				>
 					<option value="">Select</option>
 					{#each REQUIRES_TESTING as option}
@@ -565,7 +694,7 @@
 					id="requires_training"
 					class="form-control"
 					disabled={!editable('requires_training')}
-					value={cc.requires_training ?? ''}
+					bind:value={form.requires_training}
 				>
 					<option value="">Select</option>
 					{#each REQUIRES_TRAINING as option}
@@ -584,7 +713,7 @@
 				class="form-control"
 				rows="3"
 				disabled={!editable('risk_rationale')}
-				value={cc.risk_rationale ?? ''}
+				bind:value={form.risk_rationale}
 			></textarea>
 		</div>
 
@@ -597,7 +726,7 @@
 				class="form-control"
 				rows="3"
 				disabled={!editable('key_risks_mitigations')}
-				value={cc.key_risks_mitigations ?? ''}
+				bind:value={form.key_risks_mitigations}
 			></textarea>
 		</div>
 	</section>
@@ -615,7 +744,7 @@
 				class="form-control"
 				rows="5"
 				disabled={!editable('high_level_implementation_plan')}
-				value={cc.high_level_implementation_plan ?? ''}
+				bind:value={form.high_level_implementation_plan}
 			></textarea>
 		</div>
 
@@ -628,7 +757,7 @@
 				class="form-control"
 				rows="3"
 				disabled={!editable('validation_approach')}
-				value={cc.validation_approach ?? ''}
+				bind:value={form.validation_approach}
 			></textarea>
 		</div>
 
@@ -641,7 +770,7 @@
 				class="form-control"
 				rows="2"
 				disabled={!editable('success_criteria')}
-				value={cc.success_criteria ?? ''}
+				bind:value={form.success_criteria}
 			></textarea>
 		</div>
 
@@ -654,7 +783,7 @@
 				class="form-control"
 				rows="3"
 				disabled={!editable('rollback_backout_plan')}
-				value={cc.rollback_backout_plan ?? ''}
+				bind:value={form.rollback_backout_plan}
 			></textarea>
 		</div>
 	</section>
@@ -767,21 +896,24 @@
 			<label for="assigned_approver_id"
 				>Assign Approver{#if required('assigned_approver_id')} *{/if}</label
 			>
-			<!-- The value is the id and the label is the name (A11). At 7a the
-			     only option is the current assignee. When the list comes from
-			     `GET /approvers`, it must still include the current assignee,
-			     who may since have been deactivated. -->
+			<!-- The value is the id and the label is the name (A11). The options
+			     are `GET /approvers`, plus the current assignee if the list lacks
+			     them (`approverOptions`, flag 26). ⚠️ "Select Approver" is `""`,
+			     which the API rejects for this field: 7c must send `null`. -->
 			<select
 				id="assigned_approver_id"
 				class="form-control"
 				disabled={!editable('assigned_approver_id')}
-				value={cc.assigned_approver_id ?? ''}
+				bind:value={form.assigned_approver_id}
 			>
 				<option value="">Select Approver</option>
-				{#if cc.assigned_approver_id !== null}
-					<option value={cc.assigned_approver_id}>{cc.assigned_approver_name}</option>
-				{/if}
+				{#each approverOptions(approvers, cc) as approver}
+					<option value={approver.id}>{approver.full_name}</option>
+				{/each}
 			</select>
+			{#if approversError}
+				<div class="esig-error show">{approversError}</div>
+			{/if}
 		</div>
 
 		<div class="form-group">
@@ -791,7 +923,7 @@
 				class="form-control"
 				rows="3"
 				disabled={!editable('comments_for_approver')}
-				value={cc.comments_for_approver ?? ''}
+				bind:value={form.comments_for_approver}
 			></textarea>
 		</div>
 
@@ -941,7 +1073,7 @@
 				class="form-control"
 				rows="4"
 				disabled={!editable('comments')}
-				value={cc.comments ?? ''}
+				bind:value={form.comments}
 			></textarea>
 		</div>
 

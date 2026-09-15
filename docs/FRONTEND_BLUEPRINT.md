@@ -312,16 +312,33 @@ Both save endpoints accept a **partial** body (RFC 7386 merge-patch):
 | key **absent** | unchanged |
 | `"field": null` | **cleared** |
 | `"field": "value"` | set |
-| `"field": ""` | **cleared** — text fields only |
+| `"field": ""` | **cleared** — text and enum fields only |
 
-⚠️ **`""` is a parse error on date and time fields.** Only `null` clears those.
-A cleared date picker must send `null`.
+⚠️ **`""` is a parse error on the four date and time fields and on
+`assigned_approver_id`.** Only `null` clears those. A cleared date picker must
+send `null`, and so must the approver select, whose "Select Approver" option has
+`value=""`. The dates unmarshal into `*time.Time` and the approver into
+`*uuid.UUID`, and neither parses an empty string.
 
 **Only the fields listed for that state are accepted.** Any other key returns
 **400** listing every offending key, and **nothing is written** — the rejection is
 atomic, so a valid field sent alongside an invalid key is not saved either.
 
 Sending the whole form on every save is fine; sending only what changed is fine.
+Unchanged values write no audit row either way.
+
+**Also true of `PUT /{ccID}`**, audited against `HandlerSaveDraft`:
+- **An empty body `{}` is a 400**, `No fields to update`.
+- **The checks run in this order:** body parse, empty body, unknown keys (400),
+  not found (404), not the owner (403), not `Initiated` (409). So a non-owner
+  sending a bad key gets 400, not 403. Ownership is `change_owner_id` against the
+  caller, with no role check.
+- **Text and enum values are trimmed, and whitespace-only becomes `null`**,
+  before the length and enum checks. The response can therefore differ from what
+  was sent, so rebuild the form from it.
+- **A save that changes nothing is still 200** and returns the record, and
+  `last_updated_on` does not move. The response is re-read inside the
+  transaction, so it is identical to `GET`.
 
 ## A4. The en-dash trap
 
@@ -354,6 +371,9 @@ only the submitted value matters.
 
 `DATE` columns arrive and depart as **midnight UTC**.
 
+The same `""` → 400 applies to `assigned_approver_id`, which is not a date but
+unmarshals into `*uuid.UUID` (A3).
+
 ### A5.2 Time-of-day fields carry a placeholder date
 
 `implementation_window_start` and `_end` are `TIME` columns and return as:
@@ -364,6 +384,10 @@ only the submitted value matters.
 
 The date portion is an artifact — Go's `time.Time` always carries one. Strip it
 for display; send the same shape back.
+
+`<input type="time">` yields `HH:MM` only while it has no `step` attribute. Add one
+and the value gains seconds, so `0000-01-01T${value}:00Z` stops being valid RFC
+3339 and every save 400s. That failure is loud.
 
 ### A5.3 Two date rules, enforced at T2
 
@@ -1184,8 +1208,15 @@ change_title: form.change_title.trim() || null
 ```
 
 `|| null` turns an emptied box back into a clear instruction, which matches A3 —
-and the API normalises `""` to `null` for text fields anyway. **Date and time
-fields must send `null`**, since `""` is a parse error there (A5.1).
+and the API normalises `""` to `null` for text and enum fields anyway. **Date and
+time fields, and `assigned_approver_id`, must send `null`**, since `""` is a parse
+error there (A3, A5.1).
+
+**Keep the record and the form as two objects.** `cc` holds what the server last
+sent, and `form` holds what is on screen. Only a fetch or a save response
+replaces `cc`, and `form` is rebuilt from it each time. Binding straight to `cc`
+overwrites the server's copy on the first keystroke, and then nothing can tell
+which fields changed.
 
 ### Errors are a discriminated union
 
@@ -1324,7 +1355,7 @@ feel contiguous.
 | 6 | **All Change Controls and My Change Controls**: one list on two routes. Filters and pagination come from URL params, and `/my-change-controls` presets `owner=me` | Query-parameter handling, `total` vs `limit`, offset reset, and `$derived` on URL values |
 | **7a** | **The CC form, read-only**: fetch a record by `[ccId]` **and its signature history**, and render every field as a **disabled control**, with `disabled` coming from one `editable()` that returns false for now. System fields stay text. Amended at step 7a, which replaced "all 24 fields as text" | The route, the fetch, the field layout against the prototype, and date display across time zones (A5.5). No binding yet |
 | **7a+** | **Create**: the "+ Create Change Control" button (CC Owner only), `POST /changecontrols`, then `goto` the new record | The 201 and the generated CC-ID, and 7a rendering an **all-null** record. Moved out of step 8 at step 4. See below |
-| **7b** | **Bind the fields** — `bind:value` throughout, with the `null` ↔ `''` conversion at both boundaries | Every input type: text, textarea, the eight selects, dates, times |
+| **7b** | **Bind the fields** — `bind:value` throughout, with the `null` ↔ `''` conversion at both boundaries | Every input type in the owner's Initiated slice: text, textarea, the six enum selects, the approver select from `GET /approvers`, dates, times. Amended at 7b: the page has eleven selects, seven of them in that slice |
 | **7c** | **Save Draft** — build a partial body, send it, handle the response | The absent/null/value model, the write-shaped type, RFC 3339 conversion, the 400 `issues` shape |
 | **7d** | **Dirty tracking** — compare current state to the last-loaded record | The gate that step 9 depends on |
 | 8 | **The `Initiated` role views**: the same form as Approver, Viewer and Admin | The Security Matrix as `{#if}` and `disabled`, and **the Viewer's read-only view** |

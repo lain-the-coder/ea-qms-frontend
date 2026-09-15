@@ -23,9 +23,10 @@ info:
       the date portion for display; send the same format back.
     - **Optional fields are `null`, never absent.** No field is omitted from a
       response.
-    - **To clear a field, send `null`.** For text fields an empty string `""` is
-      also accepted and normalised to `null`. For date and time fields `""` is a
-      parse error — only `null` clears them.
+    - **To clear a field, send `null`.** For text and enum fields an empty
+      string `""` is also accepted and normalised to `null`. For date and time
+      fields, and for `assigned_approver_id`, `""` is a parse error — only
+      `null` clears them.
     - **Business rules are validated at transitions, not at save.** A draft may
       hold incomplete or not-yet-valid data.
 
@@ -722,7 +723,7 @@ components:
         | key absent | unchanged |
         | `"field": null` | cleared |
         | `"field": "value"` | set |
-        | `"field": ""` | cleared (text fields only — a parse error on dates) |
+        | `"field": ""` | cleared (text and enum fields only — a parse error on the four dates and times and on `assigned_approver_id`) |
 
         Only the 24 fields below are accepted. **Any other key returns 400**
         listing every offending key, and nothing is written.

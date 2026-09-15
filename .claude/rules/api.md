@@ -164,7 +164,11 @@ deactivation bites immediately, not in 30 minutes.
 
 RFC 3339 only. `"2026-10-15"` and `""` are both 400 — **only `null` clears a date
 field**. `TIME` columns return as `0000-01-01T09:00:00Z`; strip the date for
-display, send the same shape back.
+display, send the same shape back. `<input type="time">` gives `HH:MM` only while
+it has no `step` attribute.
+
+⚠️ **`""` is also a 400 on `assigned_approver_id`** (`*uuid.UUID` cannot parse
+it). Text and enum fields are the only ones where `""` clears.
 
 ⚠️ **Display: slice, never parse** (blueprint A5.5).
 
@@ -185,3 +189,10 @@ An input bound to `null` renders the string `"null"`. Convert at the boundaries:
 const form = $state({ change_title: cc.change_title ?? '' });   // API → form
 change_title: form.change_title.trim() || null                  // form → API
 ```
+
+`'' → null` is **load-bearing** on five fields, where `""` is a 400: the four
+dates and times, and `assigned_approver_id`. On the 13 text fields and six enum
+selects it only tidies, because the server trims and nulls `""` itself.
+
+`form` and the record (`cc`) are **two objects**. Only a fetch or a save response
+replaces `cc`, and `form` is rebuilt from it every time, since the server trims.

@@ -509,11 +509,18 @@ export interface ChangeControlListResponse {
  * | key absent          | unchanged                                     |
  * | `"field": null`     | cleared                                       |
  * | `"field": "value"`  | set                                           |
- * | `"field": ""`       | cleared — TEXT ONLY, a parse error on dates    |
+ * | `"field": ""`       | cleared on text and enum fields; a 400 on the  |
+ * |                     | four dates/times and `assigned_approver_id`    |
  *
  * Only these 24 fields are accepted. Any other key returns 400 listing every
  * offending key, and nothing is written — which is what would happen if a body
  * were built from a `ChangeControlResponse` instead of this type.
+ *
+ * ⚠️ An empty body `{}` is also a 400, `No fields to update`.
+ *
+ * Text and enum values are trimmed server-side, and whitespace-only becomes
+ * `null`, so the response can differ from what was sent. Rebuild the form
+ * from it.
  *
  * No presence validation: a draft may be saved empty. Format is validated —
  * length, enum membership, JSON type.
@@ -556,7 +563,14 @@ export interface SaveDraftRequest {
 	validation_approach?: string | null;
 	success_criteria?: string | null;
 	rollback_backout_plan?: string | null;
-	/** Must be an active user holding the Approver role — source `GET /approvers`. */
+	/**
+	 * Must be an active user holding the Approver role — source `GET /approvers`.
+	 *
+	 * ⚠️ Clear it with `null`, never `''`. The handler unmarshals into a Go
+	 * `*uuid.UUID`, and an empty string fails to parse: 400 `Assigned Approver
+	 * ID must be a UUID or null`. The select's "Select Approver" option has
+	 * `value=""`, so this is the value a cleared select produces.
+	 */
 	assigned_approver_id?: string | null;
 	comments_for_approver?: string | null;
 	comments?: string | null;

@@ -125,8 +125,9 @@ correct**, so they are not re-investigated next session.
 4. **File download cannot be `<a href>`.** It needs the bearer token and a link
    cannot send headers. `fetch` → `.blob()` → object URL. Blueprint A6.2.
 
-5. **`null` clears a field; `""` is a parse error on dates.** Text fields accept
-   both. Date and time fields accept only `null`. Blueprint A3, A5.
+5. **`null` clears a field; `""` is a parse error on dates, times and
+   `assigned_approver_id`.** Text and enum fields accept both. Date, time and
+   the approver id accept only `null`. Blueprint A3, A5.
 
 6. **CORS fails confusingly.** A misconfigured origin shows up as a bare
    network error (status 0), so check the browser console first. It cannot
