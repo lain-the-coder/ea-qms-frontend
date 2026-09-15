@@ -116,10 +116,11 @@ correct**, so they are not re-investigated next session.
 
 2. **Save then submit.** The two submit transitions, T2 and T6, carry **no field
    values** — they validate what is already stored, and silently ignore any field
-   sent beside the credentials. Submit must be disabled while the form is dirty, or
-   the API rejects fields the user can see filled in. The other transitions carry
-   their own: T3 `cancellation_reason`; T4/T5 `decision`, `risk_level` and
-   `decision_comments`; T7/T8 `final_decision` and `final_comments`. Blueprint A2.
+   sent beside the credentials. Submit must refuse, with a message, while the
+   form is dirty (a disabled `.btn` looks enabled), or the API rejects fields the
+   user can see filled in. The other transitions carry their own: T3
+   `cancellation_reason`; T4/T5 `decision`, `risk_level` and `decision_comments`;
+   T7/T8 `final_decision` and `final_comments`. Blueprint A2.
 
 3. **A value read from the URL must be `$derived`, never a plain `let`.** Query
    params change without remounting, so a plain `let` reads once and goes stale.

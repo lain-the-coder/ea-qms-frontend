@@ -1,7 +1,8 @@
 <!--
 	The change-control form (B5): one page for every state and every role.
 	Step 7b binds the owner's 24 draft fields, and 7c saves them. Save Draft
-	sends only the fields that differ from the record.
+	sends only the fields that differ from the record. 7d shows, continuously,
+	whether any do: the gate step 9's Submit depends on.
 
 	Markup from docs/prototypes/owner/cc-form-closed.html, the one prototype
 	with every section populated. The other cc-form-* prototypes differ in which
@@ -223,6 +224,10 @@
 	function setRecord(next: ChangeControlResponse) {
 		cc = next;
 		form = toDraftForm(next);
+		// No partial date can survive this. `load()` unmounts the form, so its
+		// inputs are fresh. A 200 save cannot start while one is partial, and
+		// the lock disables the inputs while it runs.
+		incomplete = [];
 	}
 
 	/**
@@ -439,9 +444,9 @@
 	 * the same as a deliberately emptied picker, so the body would send `null`
 	 * and clear a stored date. Only `validity.badInput` tells the two apart.
 	 *
-	 * The DOM is read directly, once, at save time. `bind:this` is not on B3's
-	 * list, and an `oninput` tracker would miss a partial entry typed into an
-	 * empty picker, because the value stays `''` and no `input` event fires.
+	 * The DOM is read directly, with `getElementById`, because `bind:this` is
+	 * not on B3's list. `saveDraft()` calls it fresh at click time, and so must
+	 * step 9's Submit. `incomplete` below is only its reactive copy.
 	 */
 	function incompleteDateTimes(): string[] {
 		const labels: string[] = [];
@@ -450,6 +455,21 @@
 			if (input?.validity.badInput) labels.push(label);
 		}
 		return labels;
+	}
+
+	/**
+	 * `validity.badInput` is DOM state, not a signal, so `dirty` cannot see it
+	 * by itself. This copy is refreshed from two events on the four inputs
+	 * (decision 73), and each event covers a case the other misses:
+	 * - `keyup`: typing `25/10/` into an empty picker. The value stays `''`,
+	 *   so no `input` event fires.
+	 * - `input`: the calendar popup and its clear button, where no key is
+	 *   pressed.
+	 */
+	let incomplete = $state<string[]>([]);
+
+	function recheckDateTimes() {
+		incomplete = incompleteDateTimes();
 	}
 
 	/**
@@ -496,6 +516,31 @@
 		}
 		return body as SaveDraftRequest;
 	}
+
+	/**
+	 * Whether the screen differs from the record, or might (decision 72). It
+	 * uses the save body's own comparison rather than a second definition of
+	 * "changed", plus a partial date or time, which the comparison cannot see
+	 * because the input reports `''`. Every known error here is false-dirty,
+	 * which is the safe direction for a gate.
+	 *
+	 * Lazy: a keystroke only marks it stale, and it recomputes when the action
+	 * bar reads it, once per flush. The hint re-renders only when the boolean
+	 * flips.
+	 *
+	 * ⚠️ STEP 9. T2 ignores field values, so this is the only guard against
+	 * submitting unsaved edits (A2). Submit is not `disabled`, because
+	 * `global.css` has no `.btn:disabled` and a disabled button looks enabled.
+	 * Its click handler must refuse, with a message in the action bar, before
+	 * the modal opens, if `saving`, `dirty`, or `incompleteDateTimes()` is
+	 * non-empty (a fresh read, not `incomplete`). It must check `dirty` again
+	 * just before the POST, unless the open modal locks the form.
+	 */
+	const dirty = $derived(
+		cc !== null &&
+			form !== null &&
+			(incomplete.length > 0 || Object.keys(draftChanges(form, cc)).length > 0)
+	);
 
 	/**
 	 * `PUT /changecontrols/{ccID}`. What each outcome does to `cc` and `form` is
@@ -743,6 +788,8 @@
 					id="proposed_implementation_date"
 					class="form-control"
 					disabled={!editable('proposed_implementation_date')}
+					oninput={recheckDateTimes}
+					onkeyup={recheckDateTimes}
 					bind:value={form.proposed_implementation_date}
 				/>
 			</div>
@@ -756,6 +803,8 @@
 					id="target_closure_date"
 					class="form-control"
 					disabled={!editable('target_closure_date')}
+					oninput={recheckDateTimes}
+					onkeyup={recheckDateTimes}
 					bind:value={form.target_closure_date}
 				/>
 			</div>
@@ -769,6 +818,8 @@
 					id="implementation_window_start"
 					class="form-control"
 					disabled={!editable('implementation_window_start')}
+					oninput={recheckDateTimes}
+					onkeyup={recheckDateTimes}
 					bind:value={form.implementation_window_start}
 				/>
 				<div class="field-hint">Optional (recommended for IT changes)</div>
@@ -781,6 +832,8 @@
 					id="implementation_window_end"
 					class="form-control"
 					disabled={!editable('implementation_window_end')}
+					oninput={recheckDateTimes}
+					onkeyup={recheckDateTimes}
 					bind:value={form.implementation_window_end}
 				/>
 				<div class="field-hint">Optional (recommended for IT changes)</div>
@@ -1344,6 +1397,10 @@
 			<div class="esig-error show" style:margin-bottom="0">
 				{saveError.error}{#if 'issues' in saveError}: {saveError.issues.join(', ')}{/if}
 			</div>
+		{:else if dirty}
+			<!-- Outranks "Saved …" without clearing it (decision 75). Undo back
+			     to the saved values and that message returns, still true. -->
+			<span class="field-hint">Unsaved changes</span>
 		{:else if saveNotice}
 			<span class="field-hint">{saveNotice}</span>
 		{/if}

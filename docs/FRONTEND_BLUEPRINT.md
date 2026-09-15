@@ -276,10 +276,14 @@ User edits the form
   → POST /{ccID}/submit      validate what was saved, sign, transition
 ```
 
-**Consequence:** the Submit button must be **disabled while the form is dirty**,
+**Consequence:** Submit must **refuse while the form is dirty**, with a message,
 or must save first. Otherwise the user submits with unsaved edits and the API
 rejects fields they can see filled in on screen — because that text never left
-the browser.
+the browser. Amended at 7d: **refuse, not `disabled`**. `global.css` has no
+`.btn:disabled`, so a disabled Submit looks enabled and a click on it says
+nothing. The refusal runs at click time and again just before the POST. "Dirty"
+includes a partly typed date or time, which reports `''` and so is invisible
+to the diff.
 
 This applies to **both** save endpoints:
 
@@ -1395,7 +1399,8 @@ express the Security Matrix.
 
 ## B9. Build order
 
-Eighteen steps. Each is independently verifiable against the running API — do not
+Nineteen steps: the seventeen numbered ones, with step 7 split into 7a–7d, plus
+7a+ and 7d+. Amended at 7d, which added 7d+. Each is independently verifiable against the running API — do not
 start one until the previous works end to end, and do not merge two because they
 feel contiguous.
 
@@ -1412,6 +1417,7 @@ feel contiguous.
 | **7b** | **Bind the fields** — `bind:value` throughout, with the `null` ↔ `''` conversion at both boundaries | Every input type in the owner's Initiated slice: text, textarea, the six enum selects, the approver select from `GET /approvers`, dates, times. Amended at 7b: the page has eleven selects, seven of them in that slice |
 | **7c** | **Save Draft** — send only the changed fields, and handle the response | The absent/null/value model, the write-shaped type, RFC 3339 conversion, and the plain 400. Amended at 7c: a save's `issues` lists only unknown keys, which a body built from `SaveDraftRequest`'s keys cannot contain |
 | **7d** | **Dirty tracking** — compare current state to the last-loaded record | The gate that step 9 depends on |
+| **7d+** | **Navigation guard**: `beforeNavigate` asks before leaving a dirty form, the browser's native dialog covers reload and tab close, and there is **no prompt on a forced sign-out** | `dirty`'s first consumer, and a guard that stands aside once the session has ended. Added at 7d. See below |
 | 8 | **The `Initiated` role views**: the same form as Approver, Viewer and Admin | The Security Matrix as `{#if}` and `disabled`, and **the Viewer's read-only view** |
 | 9 | **T2 submit + the e-signature modal** | The first transition end to end, and the save-then-submit gate |
 | 10 | **T3 cancel** | The one modal that collects **a reason *and* credentials together** — unlike every other transition |
@@ -1444,6 +1450,18 @@ and the role views share nothing but the word `Initiated`.
 
 It is labelled `7a+` rather than renumbering 7b–7d, because other documents cite
 those numbers.
+
+**The navigation guard comes straight after 7d**, as `7d+`. It reads `dirty`, so
+it cannot come earlier. Without it, leaving a dirty form loses the edits
+silently. It was not folded into 7d, for three reasons:
+- It brings a new SvelteKit API, `beforeNavigate`, and a new UI pattern,
+  `confirm()`.
+- `request()`'s forced sign-out navigates through the same callbacks. A guard
+  that prompts there lets the user stay on a form that can no longer save,
+  which is worse than no guard.
+- Its checks are as many as 7d's.
+
+It is labelled `7d+` for the same reason as `7a+`.
 
 **My Change Controls is step 6's list with `owner=me` preset.** It uses the
 same endpoint, response shape and pagination, so it is one component on two

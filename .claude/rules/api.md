@@ -119,12 +119,20 @@ built the form. A whole-form body reverts another tab's save, writing false
 with seconds. An empty diff sends nothing: `{}` is a 400.
 
 - ⚠️ **T2 and T6 carry no field values, and silently ignore any they are sent.**
-  No 400 catches a submit of unsaved edits, so Submit must be disabled while the
-  form is dirty. T3, T4/T5 and T7/T8 do carry their own fields.
+  No 400 catches a submit of unsaved edits, so Submit must refuse, with a
+  message, while the form is dirty. **Not `disabled`:** `global.css` has no
+  `.btn:disabled`, so a disabled button looks enabled and a click says nothing.
+  Refuse at click time, and check `dirty` again just before the POST. T3, T4/T5
+  and T7/T8 do carry their own fields.
 - **Lock the form while a save is in flight**, because the response rebuilds
   `form`. Keep the lock out of the permission check that the asterisks read.
-- **A partly typed date reads `''`.** Check `validity.badInput` on the four date
-  and time inputs and refuse the save, or it clears the stored date.
+- **A partly typed date reads `''`**, so only `validity.badInput` on the four
+  date and time inputs tells it from an emptied picker.
+  - At click time, read it fresh and refuse the save, or the save clears the
+    stored date. Refuse a submit the same way.
+  - For `dirty`, which the diff alone would report clean, refresh a reactive copy
+    from **both** `keyup` and `input`. Typing into an empty picker fires no
+    `input` event, and the popup fires no `keyup`.
 - **A save's value errors are plain `ErrorResponse`s for the first failing
   field.** Every 400 is atomic, audit rows included.
 - **A 409 means the record has left the state: refetch it** (A8.2).
