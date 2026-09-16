@@ -152,6 +152,24 @@ Before writing a screen, read the matching file in `docs/prototypes/` — `owner
 **Invent nothing visual.** No new CSS tokens, no components that do not appear in
 a prototype.
 
+⚠️ **But the prototypes, the BRD and the Security Matrix are guides, not
+scripture.** Lain wrote all three, and they contain their author's mistakes.
+**When following one produces something obviously wrong on screen, RAISE IT
+rather than complying silently** — Lain can override any of them, and has.
+Decision 81 is the worked example: `success_criteria`'s prototype placeholder is
+a copy-paste of Validation Approach's, so the text there is **written, not
+ported**. A prompt describing the wrong field is worse than one we wrote.
+
+This does not license invention. The test that decides it:
+
+| | |
+|---|---|
+| **Untrue** — cut it | The build cannot ever do what the copy says. "You will be notified" is the case: Phase 1 has no SMTP, so the notification never arrives. Drop the sentence, keep the rest (flag 46, decisions 34 and 43) |
+| **Incomplete** — keep it | The build cannot do it *yet*, and a later step will. The Implementation Evidence hint is the case: the upload arrives at step 12, and the surrounding flow is visibly scaffolded, so it reads as unfinished rather than as a lie |
+
+**Incomplete, not untrue.** Ask which one before dropping or keeping copy for a
+feature that is not built.
+
 ## Enum values
 
 Never copy an `<option value>` from a prototype — six of them use en-dashes

@@ -3,12 +3,16 @@
 Read this at the start of every session. Update it at the end of every build step,
 once the step has been verified.
 
+⚠️ **New decisions and flags APPEND TO THE END of their own table, ascending.**
+Inserting one above an existing row costs a reorder — three of them in one step
+is what prompted this line.
+
 ---
 
 ## Status
 
-**Current step:** 8a, Permissions by identity. **Verified, awaiting commit.** Next: step 8b (the `In Implementation` slice and its save)
-**Last verified:** Step 8a. An Approver who is not the record's assignee sees 0 enabled controls and no Submit Decision — the check the Security Matrix would have failed, since the API authorises by assignment and not by role. Under throttling, a same-document Back left only Back to List in the bar, so the 7c defect did not recur in three new form objects. See the checkpoint
+**Current step:** 8b, the `In Implementation` slice and its save. **Verified, awaiting commit.** Next: step 9 (T2 submit + the e-signature modal)
+**Last verified:** Step 8b. A one-key implementation save left four fields holding real values untouched, so the partial body is proven against data that could have been clobbered rather than against nulls. Three implementation saves wrote **no** `audit_logs` row, which confirms BRD SC-5 in the database and closes the finding I had wrongly framed as a compliance gap. See the checkpoint
 
 | Step | | Verified by |
 |---|---|---|
@@ -25,7 +29,7 @@ once the step has been verified.
 | 7d · Dirty tracking | ✅ | Lain: browser, Network tab, console and psql. Checks 1–9 passed, including both required checks (3 and 5). Check 10 was my `bun run check` and `bun run build`. Optional check 11 (flag 34) was skipped |
 | 7d+ · Navigation guard | ✅ | Lain: browser, Network tab under throttling, console and psql. Checks 1–7 passed, check 3 on its second, corrected setup. Optional check 8 (the 409) was skipped. `bun run check` and `bun run build` pass |
 | 8a · Permissions by identity + the approver's gates | ✅ | Lain: browser and psql, across all four roles and five states. **All ten checks passed**, plus three re-checks after the document sweep. `bun run check` and `bun run build` pass |
-| 8b · `In Implementation` + its save | ⬜ | |
+| 8b · `In Implementation` + its save | ✅ | Lain: browser, Network tab and psql. **Eleven of twelve checks passed**; check 8 (the 409) was skipped. Checks 1 and 3 were run together against fields holding real values. `bun run check` and `bun run build` pass |
 | 9 · T2 submit + e-signature modal | ⬜ | |
 | 10 · T3 cancel | ⬜ | |
 | 11 · Approver flow (T4/T5) | ⬜ | |
@@ -685,7 +689,93 @@ re-investigated; the defect and the gaps are there too.
   (`saveDraft`, `submitGate`, then `saveImplementation`). **That hits the
   three-copies threshold — propose the extraction to Lain, do not do it.**
 - **Flag 45's count becomes 3 at 8b.** Check it with
-  `rg '\?\? SIGNATURE_NOT_BUILT' src/`, never a bare grep.
+  `grep -c "?? SIGNATURE_NOT_BUILT" "src/routes/(app)/change-controls/[ccId]/+page.svelte"`,
+  never a search for the bare name. Flag 45 has the reason.
+
+### ✅ Step 8b — The `In Implementation` slice and its save
+
+**Built** — `[ccId]/+page.svelte` only:
+- **`implForm`**, the fourth object and the second dirty-tracked one, keyed to
+  `SaveImplementationRequest`'s five. `toImplForm` is a literal like the other
+  three (decision 60); `implChanges` is **one line over the generic
+  `changes()`**; `toWire` needed **no change at all**, because
+  `actual_implementation_date` was already in `WIRE_FORMAT` from 8a. Nothing in
+  the second save knows anything about dates.
+- **`saveImplementation()`** against `PUT /changecontrols/{ccID}/implementation`,
+  with decision 68's outcome table unchanged, and **one `saving` flag shared
+  with `saveDraft()`** (decision 85).
+- **`mayEdit`'s `In Implementation` arm**: `implForm`'s five, plus
+  `implementation_evidence` named explicitly — the one arm whose slice is not a
+  single object.
+- **`incompleteMessage(verb)`** (decision 86), replacing both existing copies.
+- **`submitForFinalApproval()`**, and one Save Draft button dispatching through
+  `save()`.
+- The three implementation counters and placeholders **lit up as a consequence
+  of `mayEdit` turning true** — they were already in `LIMITS` and `PLACEHOLDERS`
+  from 8a. `actual_implementation_date` joins `DATE_TIME_FIELDS` and carries
+  both `oninput` and `onkeyup`.
+- The Implementation Evidence label now carries its asterisk, with the
+  prototype's `.field-hint` beneath it (decision 87).
+
+**No rule-7 audit.** A3's second save endpoint and A7 were both audited at 8a,
+against the very handler this step calls. Nothing new was read.
+
+**Verified (Lain): eleven of twelve checks:**
+- ⚠️ **Checks 1 and 3 run together, which is stronger than either alone.** A
+  two-key save (the date as `2026-09-24T00:00:00Z`) left the other three null;
+  then three keys; then **a one-key save with the other four holding real
+  values, which all survived**. So the partial body is proven against fields
+  that could actually have been clobbered, not only against nulls — the gap in
+  7c's equivalent check.
+- **SC-5 conformance observed.** After three implementation saves the newest
+  `audit_logs` row is still CC-002's seeded T4 from 2026-08-16. `decision` and
+  `risk_level` have rows because they are on SC-5's critical list; none of the
+  five implementation fields is. **The withdrawn finding is now confirmed in the
+  database, not just in the BRD.**
+- **`dirty`'s second term and the guard both reach `implForm`:** typing gave
+  "Unsaved changes" with no request; a sidebar link gave `confirm()`; Cancel
+  kept the edit and OK lost it.
+- **Both events on `actual_implementation_date`**, each proven alone — keyboard
+  `25/10` into the empty picker, and a mouse-only popup pick. The save named the
+  field and sent nothing. ⚠️ On the second half the 7c save error masked the
+  hint: **flag 42 again**, unchanged since 7d.
+- ⚠️ **Check 6, the in-flight window.** CC-002 → list → CC-011 by in-app links,
+  then `history.go(-2)` under throttling: during "Loading…" the bar held **only
+  Back to List** — neither Save Draft nor Submit for Final Approval. `implForm`
+  is cleared with the other three.
+- **The T6 gate fires in order:** dirty → "Save your changes before submitting";
+  saved, then → "Cannot submit: Implementation Evidence is required". No request
+  either time. **The evidence special case works — checked against the record,
+  not against a form value that does not exist.**
+- **Empty diff:** no request, "No changes to save".
+- **One `toWire`, two bodies:** the implementation save sent
+  `actual_implementation_date: "2026-09-24T00:00:00Z"`; the draft save sent
+  `target_closure_date: "2026-09-17T00:00:00Z"` and `affected_systems_modules:
+  null` on a cleared field. Same shapes from both endpoints.
+- The `SIGNATURE_NOT_BUILT` use count reads **3**, as flag 45 predicts. Flag 45
+  carries the `grep` form to run it with.
+- `bun run check`: 184 files, 0 errors, 0 warnings. `bun run build` succeeds.
+
+**Not verified:**
+- **Check 8, the 409, was skipped.** The path is unchanged from 7c, whose own
+  409 check was also skipped — so **the refetch-on-409 branch has never been
+  observed on either endpoint**. Carried.
+- **The three implementation counters past their limit.** They share
+  `lengthHint` with the fifteen proven at 8a.
+
+**Notes for the next session:**
+- ⚠️ **`submitGate()` needed a special case, and it would have failed loudly
+  without it.** `implementation_evidence` is in `MANDATORY` but in no form
+  object, so `values[field]` read blank and **every** T6 submit would have
+  reported it missing. It now tests `cc.implementation_evidence === null`,
+  matching T6's `FileAttachmentExists`. It also needed `const record = cc`:
+  `cc` is reassignable, so TypeScript drops the narrowing inside the filter
+  callback.
+- **Step 12 is upload-only now.** It swaps the disabled `.upload-box` for a real
+  control and deletes nothing else — the asterisk, the hint and
+  `editable('implementation_evidence')` are all already true and waiting.
+- **Step 13 removes the last two `SIGNATURE_NOT_BUILT` uses** and the
+  declaration with them.
 
 ---
 
@@ -780,6 +870,9 @@ new rows that say what changed and why — the original stays.*
 | 82 | **A missing title renders `<em>Untitled</em>`**, in all four places it appears. Revises decision 33 | Decision 33 left it unstyled because `global.css` has no muted utility class and B4 forbids new tokens. The result was that a record with no title read identically to one actually titled "Untitled". `<em>` is a tag, not a CSS rule, so it costs nothing B4 protects, and it says the true thing: this is a placeholder standing in for a value. Truthiness rather than `??`, so a stored `''` reads the same way — the server nulls whitespace, but this no longer depends on that. **Rejected: a new CSS token** and **leaving it** |
 | 83 | **A live character counter under every length-limited field**, as a `.field-hint`, shown only past 80% of the limit. Flag 36 revised at Lain's ruling | Without it an over-long field is a 400 *after* a round trip, with no way to see how far over. ⚠️ **The limits were swept from the Go, not assumed: `change_title` is 200 and `affected_systems_modules` is 500**, not the 2000 the other sixteen carry — both `<input type="text">`, both easy to get wrong from memory. **Flag 36's second objection does not survive the sweep:** it argued that HTML `maxlength` counts UTF-16 units where Go counts runes, which defeats `maxlength` but not a counter — `[...value].length` iterates by code point and `len([]rune(s))` counts code points, so the two agree. The 80% threshold is a judgement call, stated as one: below it the counter is noise under thirteen fields at once. Text-only over the limit ("14 over the limit"), because `global.css` has a `--color-danger` token but no red text class and B4 forbids adding one. **Rejected: `maxlength`** (wrong unit, and silent truncation is worse than a 400 that explains itself) · **blocking the save** (the server decides) · **a second inline `style:` override** for colour, available if wanted |
 | 84 | **The Approvals card gets a `.section-note` per subsection, per state — including one for leftover rejection values.** Lain's ruling, after a sweep | Decision 52 replaced the prototypes' `.field-na` boxes with empty disabled controls, and decision 56 promised the **explanations those boxes carried** would not be dropped. 8a delivered that for Implementation Details and not for Approvals, leaving five empty disabled controls with nothing saying why — a promise half-kept. ⚠️ **The leftover case is worse than unexplained:** T2 and T6 clear nothing, so after a rejection Decision reads `Reject` beside a status of `Not Submitted` (a contradiction on its face) and, once resubmitted, beside `Pending` (a decision apparently already taken). Detected as `decision !== null && implementation_approval_status !== 'Approved'`, which covers both statuses and Cancelled, rather than testing one. **The controls are right to show the values** — the approver reopening the gate must see what they wrote — **it is the screen that has to say what they are.** **Rejected: restoring `.field-na`** (decision 52) and **clearing the fields client-side** (they are the record) |
+| 85 | **The second save shares `saving` and the Save Draft button with the first.** One flag, one button, a `save()` dispatcher | The two states are mutually exclusive, so only one save can ever be in flight. **A second flag could only fall out of step with `editable()`'s lock**, which reads this one (flag 32) — it would buy nothing and add a way to be wrong. The single button is the same argument: rendering two would write `canSaveDraft()` and `canSaveImplementation()` twice each, in markup, to produce a control that looks identical either way. **Rejected: a `savingImpl` flag** and **two buttons**. Submit for Final Approval is its own button because it is a different action, and its own handler because step 13 wires it while step 11 does not (flag 45) |
+| 86 | **`incompleteMessage(verb)` — one definition of the partial-date refusal, for three callers.** Lain chose it over writing the third copy | I flagged at 8a that 8b would write a third copy and proposed it rather than extracting (CLAUDE.md: propose, never extract unilaterally). ⚠️ **The three-copies rule was not the test.** Decision 46 settled that it governs *markup*, not functions, so the question was only whether one definition beats three — and a sentence that must read the same under three different buttons is exactly that case. The verb stays a parameter so the message still names the action it refused; a single wording ("before continuing") was rejected for losing that, since one action bar serves up to three buttons. **Rejected: the third copy**, and **a verbless helper** |
+| 87 | ⚠️ **"Incomplete, not untrue" — the test for copy about a feature that is not built yet.** The Implementation Evidence hint is **kept**; the "You will be notified" sentences were **dropped**. Lain's ruling | Both are text describing something the build cannot currently do, and the two go opposite ways, so the distinction had to be named or the next case would be decided by coin flip. **Untrue: the build can never do it.** Phase 1 has no SMTP (FR-6.4.1), so the notification never arrives — cut the sentence, keep the rest (flag 46). **Incomplete: a later step will.** The upload lands at step 12, and the surrounding flow is visibly scaffolded — the asterisk, the disabled box and a Submit that stops at `SIGNATURE_NOT_BUILT` — so it reads as unfinished rather than as a lie. **I proposed keeping the hint in the plan, then raised it again at 8b as possibly the same fault as the notification sentence; Lain drew the line.** Now in `.claude/rules/svelte.md`, which loads at write time, beside the standing instruction that the BRD, the Matrix and the prototypes are guides containing their author's mistakes |
 
 ---
 
@@ -831,10 +924,10 @@ the two apart, or the real problems get lost among the accepted trade-offs.*
 | 39 | **Any `.esig-error` inside a flex row needs its `margin-bottom` cancelled** (decision 71). The two `createError`s, on the dashboard and in `ChangeControlList.svelte`, sit as blocks and need nothing | Watch from step 9, wherever an error sits beside a button |
 | 40 | **CLAUDE.md trap 2 says "Transitions carry no field values"**, the universal claim corrected in A2 at 7c. It is true of T2 and T6 only. Its point, save before submit, stands | **Closed at 7c.** Amended at Lain's direction, in wording only, as trap 5 was at 7b: a trap that states something false about the API is a wrong rule, not a finding being recorded |
 | 41 | **The `keyup`/`input` pair has been proven in one browser only**, the one Lain used for checks 3 and 5. Another engine's date picker could produce a partial entry without either event | Accepted. `dirty` would read clean beside it, but the click-time fresh read in `saveDraft()` still blocks the save, and step 9's Submit must do the same read (decision 73) |
-| 42 | **A save's error stays on screen after the user fixes its cause, until the next click.** This is 7c behaviour. Since 7d it also outranks "Unsaved changes", so a fixed partial date shows the old error, not the hint (check 3) | Revisit at step 9 with flag 35, where T2's `issues` list makes stale errors more likely |
+| 42 | **A save's error stays on screen after the user fixes its cause, until the next click.** This is 7c behaviour. Since 7d it also outranks "Unsaved changes", so a fixed partial date shows the old error, not the hint (check 3). **Observed again at 8b check 5**, on `actual_implementation_date` — so it is not specific to the draft slice, and every new action button inherits it | Revisit at step 9 with flag 35, where T2's `issues` list makes stale errors more likely. **Seen twice now, in two states** |
 | 43 | ~~**Leaving a dirty form loses the edits silently.**~~ **Closed at 7d+** (decisions 77–79). Kept as written; the confirm wording and two `client.js` details below were superseded, see the corrections table.<br><br> For example, a sidebar link, Back to List, browser Back, a reload or closing the tab. `dirty` (decision 72) makes a guard possible, and nothing guarded it before 7d. Lain found it during the 7d checks.<br><br>**Three premises corrected from `@sveltejs/kit` 2.70.3's `client.js`. Lain's brief had all three wrong:**<br>- **One mechanism, not two.** `beforeNavigate` covers tab close, reload and a typed URL as `type: 'leave'`. SvelteKit's own `beforeunload` listener (2662–2690) calls `preventDefault()` when a callback cancels, and the browser shows its native dialog. `<svelte:window onbeforeunload>` would break B4, and a manual listener would duplicate SvelteKit's.<br>- **"Our own message" means `window.confirm()`.** Callbacks run synchronously (1685), so `confirm()` then `cancel()` works for `link`, `goto` and `popstate`. A styled dialog cannot be awaited, and no prototype draws one. `confirm()` is blocked inside `beforeunload`, so `leave` gets `cancel()` alone.<br>- ⚠️ **The sign-out trap. This is why the guard needed `client.js` read, not ten lines added.** `api.ts`'s `signOut()` clears the session and then calls `goto('/login')`. No `goto` option skips `beforeNavigate`, and whether the form unmounts before the callbacks run is a microtask race. **A guard that asks "discard changes?" when the session is already dead, and lets the user stay on a form that cannot save, is worse than no guard.** The BRD accepts losing unsaved data on timeout (`EA_QMS_BRD_V1_2.md`:2969).<br><br>**On confirm, nothing needs clearing, for a reason that depends on the destination:**<br>- *Another route:* the component is destroyed, and `onMount`'s cleanup removes the callback.<br>- *The same route with another CC* (Back/Forward between records): **the component is reused.** `loadIfChanged()` clears the save message, `load()` unmounts the form, and `setRecord()` rebuilds `form` and resets `incomplete`.<br>- *`leave`:* the document is gone.<br><br>**Proposed shape:**<br>- `beforeNavigate` in the form page, beside `onMount` and `afterNavigate`.<br>- Return early if `!dirty \|\| auth.user === null`.<br>- For `type === 'leave'`, call `cancel()`.<br>- Otherwise, `cancel()` unless `confirm('Discard unsaved changes?')` returns true.<br>- Add `beforeNavigate` to B3's SvelteKit subset, with its reason.<br>- Two decisions to record: the new API, and `confirm()` against decision 59's rejection of `alert()`.<br><br>⚠️ **Also in scope, to decide deliberately:** on a confirmed same-route move, "Unsaved changes" can stay in the bar while the next record loads. The action bar sits outside `{#if loading}`, and `cc` and `form` keep the old values until the response arrives.<br><br>**Checks:**<br>1. A sidebar link while dirty, cancelled (the form and edits stay) and confirmed (you leave).<br>2. Back to List, both ways.<br>3. Browser Back between two records while dirty. Cancelling keeps CC-B with its edits after SvelteKit's `history.go(-delta)`. Confirming loads CC-A with no hint and no stale message.<br>4. A reload and a tab close while dirty show the native dialog.<br>5. A partial date as the only change prompts.<br>6. A forced sign-out while dirty, via `auth.accessToken = 'x'` plus a revoked token in psql, reaches `/login` **with no prompt**.<br>7. A clean form never prompts, including right after a save. | **Closed at 7d+.** Checks 1–7 passed, with check 3 re-run in one document. The "also in scope" item was a defect shipped at 7c, fixed by decision 79 |
 | 44 | **Navigating away during an in-flight save still prompts that the changes will be lost.** `dirty` stays true until the response rebuilds `form`, but the PUT has already gone, so the edits may be saved after all | Accepted. It errs false-dirty, the safe direction (decision 72), and the window is one round-trip. Not observed |
-| 45 | **`SIGNATURE_NOT_BUILT` is scaffolding in the form page**, standing where `showEsigModal(meaning)` will open. Every caller reaches it only once `submitGate()` has passed, which is exactly the moment the modal should open — so each step replaces the call rather than adding to it. ⚠️ **`tsconfig` has no `noUnusedLocals`, so nothing in the build will notice a leftover.** The flag is the whole mechanism.<br><br>**Count the uses with `rg '\?\? SIGNATURE_NOT_BUILT' src/`** — a bare `rg SIGNATURE_NOT_BUILT` also matches the two comment blocks describing it, so it over-reads, and its total moves whenever either comment is edited. A check that looks precise and is not.<br><br>after 8a **2** · after 8b **3** · step 11 **2** · step 13 **0**, when the declaration and both comments go too. Step 9 adds none: T2's Submit arrives already wired | Open. **Closes at step 13**, and steps 11 and 13 each carry the `rg` as a check |
+| 45 | **`SIGNATURE_NOT_BUILT` is scaffolding in the form page**, standing where `showEsigModal(meaning)` will open. Every caller reaches it only once `submitGate()` has passed, which is exactly the moment the modal should open — so each step replaces the call rather than adding to it. ⚠️ **`tsconfig` has no `noUnusedLocals`, so nothing in the build will notice a leftover.** The flag is the whole mechanism.<br><br>**Count the uses with**<br>`grep -c "?? SIGNATURE_NOT_BUILT" "src/routes/(app)/change-controls/[ccId]/+page.svelte"`<br>⚠️ **Quote the path** — it holds `(`, `)`, `[` and `]`. `??` is literal to `grep`, so no escaping is needed. (`rg '\?\? SIGNATURE_NOT_BUILT' src/` is the same check, but **`rg` is not installed here** — it ships with Claude Code, not with the machine.)<br><br>⚠️ **The command must live HERE and not in the source file.** Twice now a version of this check has counted itself: first a search for the bare name, which matches the comments describing it, and then the command itself, pasted into the very file it counts — that read 4 where there were 3. **A self-counting check is wrong every time.**<br><br>after 8a **2** · after 8b **3** · step 11 **2** · step 13 **0**, when the declaration and both comments go too. Step 9 adds none: T2's Submit arrives already wired | Open, and **the count is observed, not assumed** — 2 at 8a and **3 at 8b**, each confirmed by running the command above. **Closes at step 13**, and steps 11 and 13 each carry it as a check |
 | 46 | **"You will be notified" is dropped from three info-banners** — Pending Implementation Approval, In Implementation and Pending Final Approval, each in its non-actor variant. Phase 1 has no SMTP (FR-6.4.1): the Go logs `notification pending` and sends nothing, so the sentence is a promise the system cannot keep for **every** role, not a stylistic divergence. Each banner keeps its heading and a complete, true first sentence, so nothing is invented to fill the gap. Decision 34 set the precedent by dropping the Admin dashboard's "change controls you're involved with" *because it was false*, and decision 43 did the same again — the precedent covers factual claims, not only wording. The prototypes are not edited (flag 1) | Deferred. **Restore all three with FR-6.4.1**, from the prototypes, if SMTP ever lands |
 | 47 | ⚠️ **The approver's gate fields have no navigation guard.** An assigned approver can type Decision, Risk Level and Decision Comments, click a sidebar link, and lose all three with **no prompt**. `implDecision` and `finalDecision` are input buffers outside `dirty`, and `beforeNavigate` returns early on `!dirty`. Same class as the gap Lain found during 7d's checks, which became 7d+.<br><br>⚠️ **Folding the buffers into `dirty` is the WRONG fix.** `submitGate()` refuses while `dirty`, so an approver's own typing would block their own submission — every Submit Decision would answer "Save your changes before submitting", for changes that have no save. `dirty` means *unsaved edits to a saved record*, and these fields are never saved incrementally: nothing writes them but the transition itself.<br><br>**A guard for them needs its own predicate** — the buffer differs from the record, evaluated only in the two gate states — kept separate from `dirty` and read by `beforeNavigate` alongside it | Deferred to **step 11**, where the e-signature modal makes those fields worth typing carefully and the design question ("typed but not submitted" vs "unsaved") has to be answered anyway. Decide it there for both gates at once, since step 13 inherits it |
 

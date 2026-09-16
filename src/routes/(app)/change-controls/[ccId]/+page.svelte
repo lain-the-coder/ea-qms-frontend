@@ -131,6 +131,17 @@
 	}
 
 	/**
+	 * The same, for the second save: the owner, in `In Implementation`, exactly
+	 * as `HandlerSaveImplementationDetails` checks it. Its 403 compares
+	 * `change_owner_id` and, like the draft save, has no role check.
+	 */
+	function canSaveImplementation(): boolean {
+		return (
+			cc !== null && implForm !== null && cc.current_state === 'In Implementation' && isOwner()
+		);
+	}
+
+	/**
 	 * PERMISSION: whether the Security Matrix lets the current user edit this
 	 * field of this record in its current state.
 	 *
@@ -153,11 +164,17 @@
 			case 'Pending Implementation Approval':
 				return isAssignedApprover() && implDecision !== null && field in implDecision;
 			case 'In Implementation':
-				// 8b: isOwner() && (field in implForm || field === 'implementation_evidence').
-				// The five fields save through PUT …/implementation, which does not
-				// exist here yet, so they stay disabled rather than editable with
-				// nothing to save them with.
-				return false;
+				// ⚠️ The one arm whose slice is not a single object. Five fields
+				// live in `implForm` and save through PUT …/implementation; the
+				// evidence is editable too but belongs to the upload endpoint, so
+				// it has no form value and is named explicitly. `mayEdit` being
+				// true for it is what puts the asterisk on its label at T6 — the
+				// control itself arrives at step 12.
+				return (
+					isOwner() &&
+					implForm !== null &&
+					(field in implForm || field === 'implementation_evidence')
+				);
 			case 'Pending Final Approval':
 				return isAssignedApprover() && finalDecision !== null && field in finalDecision;
 			case 'Closed':
@@ -276,10 +293,25 @@
 	type ImplDecisionForm = Record<ImplDecisionField, string>;
 	type FinalDecisionForm = Record<FinalDecisionField, string>;
 
+	/**
+	 * The owner's five fields in `In Implementation`, saved through
+	 * `PUT /changecontrols/{ccID}/implementation`. A real form, not a buffer:
+	 * it saves incrementally, so 7c's diff and 7d's dirty tracking apply to it
+	 * unchanged.
+	 *
+	 * ⚠️ FIVE keys, not the Security Matrix's six. `implementation_evidence` is
+	 * editable and mandatory at T6, but it is not in the endpoint's whitelist —
+	 * it goes through `POST …/files/implementation_evidence`. Keying this to
+	 * `SaveImplementationRequest` is what makes the 400 it would draw
+	 * unwritable.
+	 */
+	type ImplForm = Record<keyof SaveImplementationRequest, string>;
+
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 	let cc = $state<ChangeControlResponse | null>(null);
 	let draftForm = $state<DraftForm | null>(null);
+	let implForm = $state<ImplForm | null>(null);
 	let implDecision = $state<ImplDecisionForm | null>(null);
 	let finalDecision = $state<FinalDecisionForm | null>(null);
 	let signatures = $state<SignatureItem[]>([]);
@@ -297,6 +329,7 @@
 	function setRecord(next: ChangeControlResponse) {
 		cc = next;
 		draftForm = toDraftForm(next);
+		implForm = toImplForm(next);
 		implDecision = toImplDecisionForm(next);
 		finalDecision = toFinalDecisionForm(next);
 		// No partial date can survive this. `load()` unmounts the form, so its
@@ -344,6 +377,20 @@
 		};
 	}
 
+	// A literal for the same reason as above. `dateInput` slices rather than
+	// parses (A5.5, decision 57) — `actual_implementation_date` is a DATE
+	// column arriving as UTC midnight, so `new Date()` would read a day early
+	// anywhere west of UTC.
+	function toImplForm(r: ChangeControlResponse): ImplForm {
+		return {
+			actual_implementation_date: dateInput(r.actual_implementation_date),
+			post_implementation_issues: r.post_implementation_issues ?? '',
+			implementation_summary: r.implementation_summary ?? '',
+			deviations_from_plan: r.deviations_from_plan ?? '',
+			validation_performed: r.validation_performed ?? ''
+		};
+	}
+
 	// Literals for the same reason as above. Both carry the previous
 	// rejection's values when there was one, which is what the approver sees
 	// on reopening the gate (A10).
@@ -380,6 +427,7 @@
 		// is the shipped 7c defect in a new object (decision 79).
 		cc = null;
 		draftForm = null;
+		implForm = null;
 		implDecision = null;
 		finalDecision = null;
 		error = null;
@@ -404,6 +452,7 @@
 		} else {
 			cc = null;
 			draftForm = null;
+			implForm = null;
 			implDecision = null;
 			finalDecision = null;
 			error = record.error.error;
@@ -644,7 +693,10 @@
 		comments_for_approver: 'Optional comments for the approver',
 		comments: 'Add any additional information or context',
 		decision_comments: 'Provide rationale for your decision',
-		final_comments: 'Provide final approval comments'
+		final_comments: 'Provide final approval comments',
+		implementation_summary: 'Describe what was implemented, timeline, and key activities performed',
+		deviations_from_plan: `Document any deviations from the approved plan. If none, state 'No deviations'`,
+		validation_performed: 'Describe validation activities completed and results'
 	};
 
 	/** `''` rather than `undefined`, so the attribute is absent when disabled. */
@@ -724,16 +776,22 @@
 	let actionNotice = $state<string | null>(null);
 
 	/**
-	 * The date and time inputs, whose ids equal their field keys. Four at 8a;
-	 * 8b adds `actual_implementation_date` when that input becomes editable.
-	 * Typed as `EditableField[]`, so a misspelt key fails `bun run check` and
-	 * the labels come from the one map above rather than a second list.
+	 * The date and time inputs, whose ids equal their field keys. Typed as
+	 * `EditableField[]`, so a misspelt key fails `bun run check` and the labels
+	 * come from the one map above rather than a second list.
+	 *
+	 * ⚠️ `actual_implementation_date` joined at 8b, and its input needs BOTH
+	 * `oninput` and `onkeyup` like the other four — 7d's closing note names
+	 * this field specifically. Each event covers what the other misses: typing
+	 * `25/10/` into an empty picker fires no `input`, and the calendar popup
+	 * fires no `keyup`.
 	 */
 	const DATE_TIME_FIELDS: readonly EditableField[] = [
 		'proposed_implementation_date',
 		'target_closure_date',
 		'implementation_window_start',
-		'implementation_window_end'
+		'implementation_window_end',
+		'actual_implementation_date'
 	];
 
 	/**
@@ -768,6 +826,25 @@
 
 	function recheckDateTimes() {
 		incomplete = incompleteDateTimes();
+	}
+
+	/**
+	 * The refusal shown when a date or time input holds a partial entry, or
+	 * `null` when none does. Always a FRESH read (decision 73), so every caller
+	 * gets the backstop flag 41 describes.
+	 *
+	 * One definition, three callers — both saves ("saving") and `submitGate()`
+	 * ("submitting"). Extracted at 8b rather than written a third time: the
+	 * three-copies rule governs markup, not functions (decision 46), so the
+	 * test was whether one definition beats three, and a sentence that must
+	 * read the same under three different buttons is exactly that case. The
+	 * verb stays a parameter so the message still names the action it refused.
+	 */
+	function incompleteMessage(verb: string): string | null {
+		const fields = incompleteDateTimes();
+		if (fields.length === 0) return null;
+		const one = fields.length === 1;
+		return `${fields.join(', ')} ${one ? 'is' : 'are'} incomplete. Finish or clear ${one ? 'it' : 'them'} before ${verb}.`;
 	}
 
 	/**
@@ -849,6 +926,21 @@
 	}
 
 	/**
+	 * The same for the five implementation fields. The shared `toWire` already
+	 * routes `actual_implementation_date` through `dateOutput` via
+	 * `WIRE_FORMAT`, so nothing here knows anything about dates.
+	 *
+	 * The cast covers `post_implementation_issues`, whose select can only yield
+	 * `''` or a member of its `types.ts` array; `''` is already `null` by here.
+	 */
+	function implChanges(
+		current: ImplForm,
+		record: ChangeControlResponse
+	): SaveImplementationRequest {
+		return changes(current, toImplForm(record)) as SaveImplementationRequest;
+	}
+
+	/**
 	 * Whether a gate's fields hold values from a review that did not approve.
 	 *
 	 * T2 and T6 clear nothing — they set the state, the status and the updater
@@ -893,7 +985,12 @@
 	const dirty = $derived(
 		cc !== null &&
 			(incomplete.length > 0 ||
-				(canSaveDraft() && draftForm !== null && Object.keys(draftChanges(draftForm, cc)).length > 0))
+				(canSaveDraft() &&
+					draftForm !== null &&
+					Object.keys(draftChanges(draftForm, cc)).length > 0) ||
+				(canSaveImplementation() &&
+					implForm !== null &&
+					Object.keys(implChanges(implForm, cc)).length > 0))
 	);
 
 	/**
@@ -911,12 +1008,9 @@
 		actionError = null;
 		actionNotice = null;
 
-		const incomplete = incompleteDateTimes();
-		if (incomplete.length > 0) {
-			const one = incomplete.length === 1;
-			actionError = {
-				error: `${incomplete.join(', ')} ${one ? 'is' : 'are'} incomplete. Finish or clear ${one ? 'it' : 'them'} before saving.`
-			};
+		const refusal = incompleteMessage('saving');
+		if (refusal !== null) {
+			actionError = { error: refusal };
 			return;
 		}
 
@@ -953,6 +1047,64 @@
 		}
 	}
 
+	/**
+	 * `PUT /changecontrols/{ccID}/implementation`. Decision 68's outcome table,
+	 * unchanged: 200 → `setRecord`; 409 → refetch, because the record has left
+	 * `In Implementation`; anything else leaves `cc` and every form object
+	 * alone, so the edits stay on screen to be fixed or resent.
+	 *
+	 * ⚠️ It shares `saving` with `saveDraft()`. The two states are mutually
+	 * exclusive, so only one can ever be in flight — and a second flag could
+	 * only fall out of step with `editable()`'s lock, which reads this one
+	 * (flag 32).
+	 */
+	async function saveImplementation() {
+		if (saving || cc === null || implForm === null) return;
+		actionError = null;
+		actionNotice = null;
+
+		const refusal = incompleteMessage('saving');
+		if (refusal !== null) {
+			actionError = { error: refusal };
+			return;
+		}
+
+		// An empty body is a 400, `No fields to update`, so nothing is sent.
+		const body = implChanges(implForm, cc);
+		if (Object.keys(body).length === 0) {
+			actionNotice = 'No changes to save';
+			return;
+		}
+
+		saving = true;
+		const mine = latest;
+		const result = await request<ChangeControlResponse>(
+			'PUT',
+			`/changecontrols/${encodeURIComponent(cc.cc_id)}/implementation`,
+			body
+		);
+		saving = false;
+		if (mine !== latest) return;
+
+		if (result.ok) {
+			setRecord(result.data);
+			actionNotice = `Saved ${formatDateTime(new Date().toISOString())}`;
+		} else {
+			actionError = result.error;
+			if (result.status === 409) load(ccId);
+		}
+	}
+
+	/**
+	 * Save Draft's click handler. One button in the bar, because the two saves
+	 * are mutually exclusive by state and rendering both would need the same
+	 * two predicates twice.
+	 */
+	function save() {
+		if (canSaveDraft()) return saveDraft();
+		if (canSaveImplementation()) return saveImplementation();
+	}
+
 	// ── Submitting a signed transition ──────────────────────────────────────
 
 	/**
@@ -967,11 +1119,13 @@
 	 * so nothing in the build will notice a leftover: **flag 45 tracks the
 	 * number of USES**.
 	 *
-	 * ⚠️ Count them with `rg '\?\? SIGNATURE_NOT_BUILT' src/`, which matches the
-	 * call sites only. A bare `rg SIGNATURE_NOT_BUILT` also matches this comment
-	 * block and the one on the handlers below, so it over-reads — and its total
-	 * moves whenever either comment is edited, this sentence included. A check
-	 * that looks precise and is not.
+	 * ⚠️ **The counting command lives in flag 45, deliberately NOT here.** It
+	 * matches on the nullish coalescing that precedes each use, so writing it
+	 * into this file would make the comment match its own pattern and inflate
+	 * the count by one. That has now happened twice — first with a bare search
+	 * for the name, which matches these comments, and then with the command
+	 * itself. **A self-counting check is wrong every time.** Keep the pattern
+	 * out of this file and read it from PROGRESS.md.
 	 *
 	 *   after 8a  2 uses   the two Submit Decisions
 	 *   after 8b  3 uses   + Submit for Final Approval
@@ -991,7 +1145,7 @@
 	 * sign something the server is about to reject. This runs those checks
 	 * first, and returns a message when the transition must not be offered.
 	 *
-	 * ⚠️ `incompleteDateTimes()` is read FRESH here, not through `incomplete`
+	 * ⚠️ `incompleteMessage()` reads the DOM FRESH, not through `incomplete`
 	 * (decision 73). The reactive copy is refreshed by two events, and flag 41
 	 * records that another browser's date picker could produce a partial entry
 	 * without either one.
@@ -1002,19 +1156,28 @@
 	 */
 	function submitGate(values: Record<string, string>): string | null {
 		// Unreachable — every caller is inside `{#if cc && …}` — but it is what
-		// narrows `cc` for the `MANDATORY[cc.current_state]` lookup below.
+		// narrows the record for the lookups below. Captured into a `const`
+		// because `cc` is reassignable, so TypeScript drops the narrowing
+		// inside the filter callback.
 		if (cc === null) return 'The record is still loading.';
+		const record = cc;
 		if (saving) return 'A save is in progress. Try again in a moment.';
 		if (dirty) return 'Save your changes before submitting.';
 
-		const incomplete = incompleteDateTimes();
-		if (incomplete.length > 0) {
-			const one = incomplete.length === 1;
-			return `${incomplete.join(', ')} ${one ? 'is' : 'are'} incomplete. Finish or clear ${one ? 'it' : 'them'} before submitting.`;
-		}
+		const refusal = incompleteMessage('submitting');
+		if (refusal !== null) return refusal;
 
-		const missing = MANDATORY[cc.current_state]
-			.filter((field) => (values[field] ?? '') === '')
+		// ⚠️ `implementation_evidence` is in MANDATORY and in EditableField, but
+		// it is in no form object — it has no control and no value, only an
+		// uploaded file. T6 checks it with `FileAttachmentExists`, so the
+		// client checks the record, not the buffer. Without this branch it
+		// would read as blank and be reported missing on every submit.
+		const missing = MANDATORY[record.current_state]
+			.filter((field) =>
+				field === 'implementation_evidence'
+					? record.implementation_evidence === null
+					: (values[field] ?? '') === ''
+			)
 			.map((field) => FIELD_LABELS[field]);
 		if (missing.length > 0) {
 			return `Cannot submit: ${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} required.`;
@@ -1051,11 +1214,29 @@
 		actionNotice = null;
 		actionError = { error: submitGate(finalDecision) ?? SIGNATURE_NOT_BUILT };
 	}
+
+	/**
+	 * T6, the owner's submit out of `In Implementation`. Its own handler for
+	 * the same reason as the two above: step 13 wires this one and step 11 does
+	 * not, so a shared handler would hold a `SIGNATURE_NOT_BUILT` reference
+	 * neither step could remove alone (flag 45).
+	 *
+	 * ⚠️ This is the gate that matters most. T6 carries no field values and
+	 * silently ignores any it is sent, so `dirty` — checked inside
+	 * `submitGate()` — is the only thing standing between an owner and
+	 * submitting a form whose edits were never saved (A2).
+	 */
+	function submitForFinalApproval() {
+		if (implForm === null) return;
+		actionError = null;
+		actionNotice = null;
+		actionError = { error: submitGate(implForm) ?? SIGNATURE_NOT_BUILT };
+	}
 </script>
 
 {#if loading}
 	<p>Loading…</p>
-{:else if cc && draftForm && implDecision && finalDecision}
+{:else if cc && draftForm && implForm && implDecision && finalDecision}
 	<!-- Every cc-form prototype uses `.page-header`, which has no bottom margin.
 	     The prototypes get their gap from the info banner that always follows
 	     it (`.info-banner` has `margin: var(--spacing-xl) 0`). This page renders
@@ -1613,7 +1794,9 @@
 					id="actual_implementation_date"
 					class="form-control"
 					disabled={!editable('actual_implementation_date')}
-					value={dateInput(cc.actual_implementation_date)}
+					oninput={recheckDateTimes}
+					onkeyup={recheckDateTimes}
+					bind:value={implForm.actual_implementation_date}
 				/>
 			</div>
 
@@ -1625,7 +1808,7 @@
 					id="post_implementation_issues"
 					class="form-control"
 					disabled={!editable('post_implementation_issues')}
-					value={cc.post_implementation_issues ?? ''}
+					bind:value={implForm.post_implementation_issues}
 				>
 					<option value="">Select</option>
 					{#each POST_IMPLEMENTATION_ISSUES as option}
@@ -1644,8 +1827,14 @@
 				class="form-control"
 				rows="4"
 				disabled={!editable('implementation_summary')}
-				value={cc.implementation_summary ?? ''}
+				placeholder={placeholder('implementation_summary')}
+				bind:value={implForm.implementation_summary}
 			></textarea>
+			{#if lengthHint('implementation_summary', implForm.implementation_summary)}
+				<div class="field-hint">
+					{lengthHint('implementation_summary', implForm.implementation_summary)}
+				</div>
+			{/if}
 		</div>
 
 		<div class="form-group">
@@ -1655,8 +1844,14 @@
 				class="form-control"
 				rows="3"
 				disabled={!editable('deviations_from_plan')}
-				value={cc.deviations_from_plan ?? ''}
+				placeholder={placeholder('deviations_from_plan')}
+				bind:value={implForm.deviations_from_plan}
 			></textarea>
+			{#if lengthHint('deviations_from_plan', implForm.deviations_from_plan)}
+				<div class="field-hint">
+					{lengthHint('deviations_from_plan', implForm.deviations_from_plan)}
+				</div>
+			{/if}
 		</div>
 
 		<div class="form-group">
@@ -1668,8 +1863,14 @@
 				class="form-control"
 				rows="3"
 				disabled={!editable('validation_performed')}
-				value={cc.validation_performed ?? ''}
+				placeholder={placeholder('validation_performed')}
+				bind:value={implForm.validation_performed}
 			></textarea>
+			{#if lengthHint('validation_performed', implForm.validation_performed)}
+				<div class="field-hint">
+					{lengthHint('validation_performed', implForm.validation_performed)}
+				</div>
+			{/if}
 		</div>
 
 		<!-- Metadata only (decision 50). Step 12 swaps the empty box for the
@@ -1693,6 +1894,18 @@
 				<div class="upload-box disabled">
 					No file uploaded<br />
 					PDF (Max 10MB)
+				</div>
+			{/if}
+			<!-- ⚠️ The label carries an asterisk from here on, because `mayEdit`
+			     is genuinely true for the owner in this state — `HandlerUploadFile`
+			     checks owner + In Implementation — and MANDATORY lists it for T6.
+			     `required()` stays computed, with no carve-out for step 12 to
+			     remember to remove. The box below it stays DISABLED until then, so
+			     the hint is what says the evidence is expected; without it the
+			     asterisk would point at something with no control. -->
+			{#if mayEdit('implementation_evidence')}
+				<div class="field-hint">
+					Upload logs, screenshots, test results, or other supporting evidence
 				</div>
 			{/if}
 		</div>
@@ -2058,10 +2271,19 @@
 		{:else if actionNotice}
 			<span class="field-hint">{actionNotice}</span>
 		{/if}
-		{#if canSaveDraft()}
-			<button type="button" class="btn secondary" onclick={saveDraft} disabled={saving}>
+		<!-- One button for both saves. They are mutually exclusive by state, so
+		     `save()` dispatches and neither predicate is written twice. -->
+		{#if canSaveDraft() || canSaveImplementation()}
+			<button type="button" class="btn secondary" onclick={save} disabled={saving}>
 				<i class="bi bi-save"></i>
 				{saving ? 'Saving…' : 'Save Draft'}
+			</button>
+		{/if}
+		<!-- T6, owner only. Same predicate as the save, because the API checks
+		     the same two things. -->
+		{#if canSaveImplementation()}
+			<button type="button" class="btn primary" onclick={submitForFinalApproval}>
+				<i class="bi bi-send"></i> Submit for Final Approval
 			</button>
 		{/if}
 		<!-- Submit Decision, for the ASSIGNED approver only — the API authorises
