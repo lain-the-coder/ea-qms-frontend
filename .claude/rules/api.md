@@ -137,6 +137,60 @@ with seconds. An empty diff sends nothing: `{}` is a 400.
   field.** Every 400 is atomic, audit rows included.
 - **A 409 means the record has left the state: refetch it** (A8.2).
 
+### The second save endpoint
+
+`PUT /changecontrols/{ccID}/implementation` takes **five** keys and no others:
+`actual_implementation_date`, `post_implementation_issues`,
+`implementation_summary`, `deviations_from_plan`, `validation_performed`.
+Same mechanics as the draft save — seeded from the locked row, trims, `""` →
+`null`, a no-op writes nothing and does not move `last_updated_on`, unknown keys
+rejected **before** the transaction (so a non-owner sending a bad key gets 400,
+not 403). **No business rules**: any date is accepted, and "not in the future"
+belongs to T6.
+
+⚠️ **`implementation_evidence` is NOT one of the five.** It is editable in the
+Matrix and mandatory at T6, but it goes through
+`POST …/files/implementation_evidence`. Putting it in the save body returns
+400 `Some fields cannot be edited in the In Implementation state` with
+`issues: ["implementation_evidence"]`. Build the body from
+`SaveImplementationRequest`'s keys and the type forbids it.
+
+⚠️ **`actual_implementation_date` is a DATE column taking RFC 3339** — the same
+trap as the four in `SaveDraftRequest`.
+
+**It writes no audit rows, and that is correct.** BRD **SC-5** names the nine
+critical fields, and none of these five is among them. Expect no `audit_logs`
+row after an implementation save.
+
+## Transitions
+
+⚠️ **Authorisation is by RECORD, not by role** (A7.6). See `svelte.md`'s
+Permissions table. No transition route carries `requireRole`.
+
+⚠️ **All five return 200 with the full `ChangeControlResponse`** — re-fetched
+inside the transaction with the five user joins, identical to `GET /{ccID}`.
+**Call `setRecord()` on the response; never refetch** (A7.7).
+
+**Check order.** T2 and T6 validate the *stored row*, so their presence checks
+run after 404/403/409. The other three validate a body the user just typed, and
+those checks run **before the transaction opens** — so they precede the 404, the
+403 and the 409. A blank `decision_comments` on a record that has already moved
+on returns the 400, not the 409.
+
+**The signature is checked last** in all five (A7.4), so the modal should only
+open once the client-side checks pass.
+
+**A failed signature** is 401 `Invalid credentials` — the exact string
+`request()` must not retry (see Auth below). It writes a `SignatureFailed` audit
+row with `cfg.db`, not the transaction, so the row survives the rollback.
+⚠️ **But a bcrypt *error* is a 500 with no row**, so a 500 from a transition is
+not a signature failure.
+
+**The meaning string is per transition, not per endpoint.** The two decision
+endpoints each have two — approve and reject — chosen by the `decision` /
+`final_decision` field, so the modal's meaning must follow the user's choice.
+The prototypes hardcode the approve string.
+
 ## Auth
 
 Access token (30 min) **in memory**. Refresh token (24 h absolute, 2 h sliding)

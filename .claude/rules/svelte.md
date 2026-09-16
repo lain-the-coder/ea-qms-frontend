@@ -160,9 +160,57 @@ Never copy an `<option value>` from a prototype — six of them use en-dashes
 
 ## Permissions
 
-Which fields are editable in a given state for a given role comes from
+Which fields are editable in a given state comes from
 `docs/Security_Matrix_V2_1.md`, which lists them per state. That becomes `{#if}`
 and `disabled` — one page for all states and roles, never a page per state.
+
+⚠️ **The Matrix is per ROLE; the API is per IDENTITY. Follow the API.**
+No transition route carries `requireRole` — all five are mounted behind
+`middlewareAuth` alone. Authorisation is a comparison against the record:
+
+| Matrix column | What the Go actually checks | Sends |
+|---|---|---|
+| CC Owner | `user.ID == cc.ChangeOwnerID` | T2, T3, both saves, the upload |
+| Approver | `cc.AssignedApproverID != nil && *… == user.ID` | T4/T5, T7/T8 |
+
+So an Approver who is **not this record's assignee** gets 403 `Forbidden`.
+Enabling the gate for every Approver is what reading the Matrix literally would
+do. Compare on the id, never the name (A11), and add **no** role check the
+server does not make — the predicate's job is to mirror it. Blueprint A7.6.
+
+⚠️ **`editable()` has one arm per state, not a branch.** Each arm asks the same
+two questions — is this the right person, and is this field in that state's
+slice — and the slice is always an object whose keys come from a write type, so
+no field list is ever typed by hand:
+
+```ts
+switch (cc.current_state) {
+  case 'Initiated':                        return isOwner() && field in draftForm;
+  case 'Pending Implementation Approval':  return isAssignedApprover() && field in implDecision;
+  // …no `default`: the switch is exhaustive over `State`, so a new state
+  // fails `bun run check` instead of silently returning false.
+}
+```
+
+⚠️ **Not every form object is dirty-tracked.** The CC form holds the record
+(`cc`) plus one object per editable slice. A slice is dirty-tracked only if an
+endpoint saves it incrementally:
+
+| Object | Saved by | Dirty-tracked |
+|---|---|---|
+| `draftForm` (24) | `PUT /changecontrols/{id}` | yes |
+| `implForm` (5) | `PUT …/implementation` | yes |
+| `implDecision` (3) · `finalDecision` (2) | **nothing** — they go with the signature in one call | **no** |
+
+The two decision objects are **input buffers**. No endpoint writes `decision`,
+`risk_level`, `decision_comments`, `final_decision` or `final_comments` except
+the transition itself, so there is nothing for them to be unsaved *from*.
+**Do not fold them into `dirty`**: the submit gate refuses while `dirty`, so an
+approver's own typing would block their own submission.
+
+⚠️ **`load()` clears every one of them** before its first `await`, not just the
+draft. A stale buffer keeps that state's action button live against a record no
+longer on screen, and the `mine = ++latest` check cannot catch it.
 
 ⚠️ **Asterisks: never copy them from a prototype.** An asterisk appears only when
 **both** of these are true (blueprint A10):

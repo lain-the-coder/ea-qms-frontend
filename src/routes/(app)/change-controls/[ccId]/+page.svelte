@@ -10,17 +10,26 @@
 
 	READ-ONLY MEANS `disabled`, NOT TEXT. Every field the Security Matrix can
 	make editable is a real control, disabled through `editable()`, so enabling
-	one never rewrites the markup. The 24 draft fields are `bind:value` on
-	`form`. The other ten still take `value=` from `cc`: they belong to other
-	endpoints and bind when their own state's step lands. The thirteen system
-	fields are never editable by anyone (CC ID, the approval By/On values, the
-	statuses…), so they stay as the prototype's `.meta-value` text.
+	one never rewrites the markup. The thirteen system fields are never editable
+	by anyone (CC ID, the approval By/On values, the statuses…), so they stay as
+	the prototype's `.meta-value` text.
 
-	TWO OBJECTS. `cc` is what the server last sent; `form` is what is on
-	screen. Binding straight to `cc` would overwrite the server's version on
-	the first keystroke, and then neither the save body (7c) nor the dirty
-	check (7d) could tell what changed. Only `setRecord()` sets either to a
-	record, and only `load()` clears them.
+	THE RECORD, AND THREE OBJECTS OVER IT. `cc` is what the server last sent.
+	`draftForm` holds the owner's 24 Initiated fields, `implDecision` and
+	`finalDecision` hold the approver's 3 and 2 at the two gates. Binding
+	straight to `cc` would overwrite the server's version on the first
+	keystroke, and then neither the save body (7c) nor the dirty check (7d)
+	could tell what changed. Only `setRecord()` sets them to a record, and only
+	`load()` clears them — all four together, both ways.
+
+	The five In Implementation fields still take `value=` from `cc`. They save
+	through a second endpoint that step 8b adds; until then they are disabled,
+	because editable fields with nothing to save them with lose work silently.
+
+	PERMISSION IS BY IDENTITY, NOT ROLE. `mayEdit()` has one arm per state, and
+	each asks whether this user is that state's actor — the record's owner, or
+	the record's ASSIGNED approver. The API checks it the same way and has no
+	role check at all (A7.6).
 
 	NOTHING IS HIDDEN BY STATE. A field with no value yet renders empty, where
 	the prototypes draw "Not applicable" boxes (a departure from BRD Rule P5).
@@ -67,6 +76,15 @@
 	// ── Permissions ─────────────────────────────────────────────────────────
 
 	/**
+	 * The two approver gates' editable fields, named once. Each transition's
+	 * request type minus the e-signature credentials IS the Security Matrix's
+	 * row for that state, so the field names are never typed by hand — the same
+	 * trick `DraftForm` plays for the owner's Initiated slice (decision 61).
+	 */
+	type ImplDecisionField = Exclude<keyof DecisionRequest, keyof ESignatureCredentials>;
+	type FinalDecisionField = Exclude<keyof FinalDecisionRequest, keyof ESignatureCredentials>;
+
+	/**
 	 * The Security Matrix's editable cells, as field keys. Derived from the
 	 * write types in types.ts, so no field name here is typed by hand, and a
 	 * misspelt key at a call site fails `bun run check`.
@@ -78,40 +96,74 @@
 		| keyof SaveDraftRequest
 		| keyof SaveImplementationRequest
 		| 'implementation_evidence'
-		| Exclude<keyof DecisionRequest, keyof ESignatureCredentials>
-		| Exclude<keyof FinalDecisionRequest, keyof ESignatureCredentials>;
+		| ImplDecisionField
+		| FinalDecisionField;
+
+	/**
+	 * ⚠️ AUTHORISATION IS BY RECORD, NOT BY ROLE (A7.6).
+	 *
+	 * None of the five transition routes carries `requireRole` — `main.go`
+	 * mounts every one behind `middlewareAuth` alone. T2, T3 and T6 compare the
+	 * caller to `change_owner_id`; T4/T5 and T7/T8 compare them to
+	 * `assigned_approver_id`. So an Approver who is not *this record's* assignee
+	 * gets 403 `Forbidden`, and the Security Matrix's "Approver" column — which
+	 * is a role — would enable the gate for all three of them.
+	 *
+	 * Both predicates mirror the server exactly and add no check it does not
+	 * make. Compared on the id, never the name (A11).
+	 */
+	function isOwner(): boolean {
+		return cc !== null && cc.change_owner_id === user.id;
+	}
+
+	function isAssignedApprover(): boolean {
+		// `assigned_approver_id` is nullable and `user.id` never is, so an
+		// unassigned record falls out here without its own branch.
+		return cc !== null && cc.assigned_approver_id === user.id;
+	}
 
 	/**
 	 * Whether the current user may save this record's draft: the owner, in
-	 * Initiated. Ownership, not role, exactly as `HandlerSaveDraft` checks it.
-	 * Its 403 compares `change_owner_id` to the caller and has no role check.
-	 * Only a CC Owner can own a record, so a role check would add nothing.
-	 * Compared on the id, never the name (A11).
+	 * Initiated, exactly as `HandlerSaveDraft` checks it.
 	 */
 	function canSaveDraft(): boolean {
-		return (
-			cc !== null &&
-			form !== null &&
-			cc.current_state === 'Initiated' &&
-			cc.change_owner_id === user.id
-		);
+		return cc !== null && draftForm !== null && cc.current_state === 'Initiated' && isOwner();
 	}
 
 	/**
 	 * PERMISSION: whether the Security Matrix lets the current user edit this
-	 * field of this record in its current state. 7b enables one slice, the
-	 * owner's 24 draft fields in Initiated.
+	 * field of this record in its current state.
 	 *
-	 * `field in form` is the slice. `DraftForm`'s keys are pinned by the type to
-	 * the 24 of `SaveDraftRequest`, so there is no third list of names.
+	 * ⚠️ One arm per state, not one predicate with a branch (flag 27). 7b's
+	 * `field in form` worked only because `DraftForm`'s keys ARE the owner's
+	 * Initiated slice; the approver's gates and the owner's In Implementation
+	 * fields belong to other endpoints and other objects. Each arm asks the same
+	 * two questions in the same order — is this the right person, and is this
+	 * field in that state's slice — and the slice is always an object whose keys
+	 * come from a request type, so there is no hand-written list anywhere.
 	 *
-	 * ⚠️ This does not extend. It works only because `DraftForm`'s keys ARE the
-	 * owner's Initiated slice. The approver's gate fields and the owner's five
-	 * In Implementation fields go to other endpoints and need their own form
-	 * objects, so step 8 restructures this per state rather than adding a branch.
+	 * No `default`: the switch is exhaustive over `State`, so a seventh state
+	 * would fail `bun run check` rather than silently returning false.
 	 */
 	function mayEdit(field: EditableField): boolean {
-		return canSaveDraft() && form !== null && field in form;
+		if (cc === null) return false;
+		switch (cc.current_state) {
+			case 'Initiated':
+				return isOwner() && draftForm !== null && field in draftForm;
+			case 'Pending Implementation Approval':
+				return isAssignedApprover() && implDecision !== null && field in implDecision;
+			case 'In Implementation':
+				// 8b: isOwner() && (field in implForm || field === 'implementation_evidence').
+				// The five fields save through PUT …/implementation, which does not
+				// exist here yet, so they stay disabled rather than editable with
+				// nothing to save them with.
+				return false;
+			case 'Pending Final Approval':
+				return isAssignedApprover() && finalDecision !== null && field in finalDecision;
+			case 'Closed':
+			case 'Cancelled':
+				return false;
+		}
 	}
 
 	/**
@@ -121,7 +173,7 @@
 	 *
 	 * The lock is here and not in `mayEdit` because `required()` reads
 	 * permission. Locking there too would drop every asterisk for the length of
-	 * each save. The lock exists because a save response rebuilds `form`, so a
+	 * each save. The lock exists because a save response rebuilds `draftForm`, so a
 	 * keystroke typed mid-save would be lost (flag 32).
 	 */
 	function editable(field: EditableField): boolean {
@@ -207,25 +259,46 @@
 	 */
 	type DraftForm = Record<keyof SaveDraftRequest, string>;
 
+	/**
+	 * The approver's two gates. These are INPUT BUFFERS, not forms.
+	 *
+	 * ⚠️ Nothing saves them incrementally: no endpoint writes `decision`,
+	 * `risk_level`, `decision_comments`, `final_decision` or `final_comments`
+	 * except the transition itself. `UpdateChangeControlDraft` and
+	 * `UpdateImplementationDetails` do not touch them, and neither save's
+	 * whitelist contains them. So there is nothing for them to be unsaved
+	 * FROM — no diff, no `dirty` term, and no navigation guard (decision 80).
+	 *
+	 * They are still seeded from the record, because T2 and T6 clear nothing:
+	 * an approver reopening a gate after a rejection finds the previous
+	 * Reject and its comments already in the controls (A10).
+	 */
+	type ImplDecisionForm = Record<ImplDecisionField, string>;
+	type FinalDecisionForm = Record<FinalDecisionField, string>;
+
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 	let cc = $state<ChangeControlResponse | null>(null);
-	let form = $state<DraftForm | null>(null);
+	let draftForm = $state<DraftForm | null>(null);
+	let implDecision = $state<ImplDecisionForm | null>(null);
+	let finalDecision = $state<FinalDecisionForm | null>(null);
 	let signatures = $state<SignatureItem[]>([]);
 	let signaturesError = $state<string | null>(null);
 	let approvers = $state<ApproverRef[]>([]);
 	let approversError = $state<string | null>(null);
 
 	/**
-	 * The only place `cc` or `form` is set to a record (`load()` only clears
-	 * them). The fetch and the save response both call it. `form` is rebuilt
-	 * from `cc` every time, whole: the server trims text and nulls `''`, so a
-	 * form that kept its own values would disagree with the record after
-	 * every save.
+	 * The only place `cc` or any of the three form objects is set to a record
+	 * (`load()` only clears them). The fetch and the save response both call
+	 * it. Each object is rebuilt from `cc` every time, whole: the server trims
+	 * text and nulls `''`, so a form that kept its own values would disagree
+	 * with the record after every save.
 	 */
 	function setRecord(next: ChangeControlResponse) {
 		cc = next;
-		form = toDraftForm(next);
+		draftForm = toDraftForm(next);
+		implDecision = toImplDecisionForm(next);
+		finalDecision = toFinalDecisionForm(next);
 		// No partial date can survive this. `load()` unmounts the form, so its
 		// inputs are fresh. A 200 save cannot start while one is partial, and
 		// the lock disables the inputs while it runs.
@@ -233,12 +306,14 @@
 	}
 
 	/**
-	 * Every value is a copied string, so `form` shares no reference with `cc`,
-	 * and typing can never reach the server's copy.
+	 * Every value is a copied string, so the form shares no reference with
+	 * `cc`, and typing can never reach the server's copy.
 	 *
 	 * An object literal, never a spread of `r`. TypeScript's excess-property
 	 * check applies to literals only, so a spread would let the other 31
-	 * response keys in without an error.
+	 * response keys in without an error. That check is why the three builders
+	 * below are not generalised into one, where the write direction is
+	 * (`toWire`, `changes`): on the read side the literal IS the check.
 	 */
 	function toDraftForm(r: ChangeControlResponse): DraftForm {
 		return {
@@ -269,6 +344,24 @@
 		};
 	}
 
+	// Literals for the same reason as above. Both carry the previous
+	// rejection's values when there was one, which is what the approver sees
+	// on reopening the gate (A10).
+	function toImplDecisionForm(r: ChangeControlResponse): ImplDecisionForm {
+		return {
+			decision: r.decision ?? '',
+			risk_level: r.risk_level ?? '',
+			decision_comments: r.decision_comments ?? ''
+		};
+	}
+
+	function toFinalDecisionForm(r: ChangeControlResponse): FinalDecisionForm {
+		return {
+			final_decision: r.final_decision ?? '',
+			final_comments: r.final_comments ?? ''
+		};
+	}
+
 	// Only the newest request may write the state, should a navigation to a
 	// different CC-ID overlap a slow one.
 	let latest = 0;
@@ -281,8 +374,14 @@
 		// record no longer on screen. `saveDraft()`'s `mine` check cannot catch
 		// that, because it reads `latest` after this increment. Cleared, `dirty`
 		// and `canSaveDraft()` are false until `setRecord()` runs.
+		//
+		// ⚠️ EVERY form object is cleared, not just the draft. A stale
+		// `implDecision` would keep Submit Decision live through a load, which
+		// is the shipped 7c defect in a new object (decision 79).
 		cc = null;
-		form = null;
+		draftForm = null;
+		implDecision = null;
+		finalDecision = null;
 		error = null;
 		signaturesError = null;
 		approversError = null;
@@ -304,7 +403,9 @@
 			setRecord(record.data);
 		} else {
 			cc = null;
-			form = null;
+			draftForm = null;
+			implDecision = null;
+			finalDecision = null;
 			error = record.error.error;
 		}
 		if (history.ok) {
@@ -338,11 +439,11 @@
 	function loadIfChanged() {
 		if (ccId === lastId) return;
 		lastId = ccId;
-		// A different record: the last one's save message does not apply. This
-		// is cleared here and not in `load()`, because a 409 calls `load()` and
+		// A different record: the last one's message does not apply. This is
+		// cleared here and not in `load()`, because a 409 calls `load()` and
 		// its message has to survive the reload.
-		saveError = null;
-		saveNotice = null;
+		actionError = null;
+		actionNotice = null;
 		load(ccId);
 	}
 
@@ -449,26 +550,191 @@
 		T8: 'rejected'
 	};
 
-	// ── Save Draft ──────────────────────────────────────────────────────────
-
-	let saving = $state(false);
-	// A failed save, or one blocked before sending. It is kept apart from the
-	// load `error`, which replaces the whole form (decision 59's precedent).
-	let saveError = $state<ErrorBody | null>(null);
-	// The neutral hint beside the button: "Saved …" or "No changes to save".
-	let saveNotice = $state<string | null>(null);
+	// ── Field labels ────────────────────────────────────────────────────────
 
 	/**
-	 * The four date and time inputs, keyed by field, which is also each
-	 * input's id. `satisfies` rejects a misspelt key while keeping the values
-	 * typed as `string`.
+	 * Every editable field's name in prose, for the messages this page writes:
+	 * the partial-date refusal, and the submit gate's list of blanks.
+	 *
+	 * ⚠️ These are the Go's OWN strings. `HandlerSubmitForImplApproval` and
+	 * `HandlerSubmitForFinalApproval` build their `problems` slices from exactly
+	 * these words, so a refusal written here and an `issues` array returned by
+	 * the server read identically. Do not "improve" one without the other. They
+	 * differ from a few on-screen labels for that reason — the Go says
+	 * "Assigned Approver" where the control says "Assign Approver", and it omits
+	 * the question marks on the three Yes/No fields.
+	 *
+	 * `Record<EditableField, …>` makes TypeScript demand all 35.
 	 */
-	const DATE_TIME_LABELS = {
+	const FIELD_LABELS: Record<EditableField, string> = {
+		change_title: 'Change Title',
+		change_description: 'Change Description',
+		change_type: 'Change Type',
+		change_category: 'Change Category',
+		department_function: 'Department / Function',
+		affected_systems_modules: 'Affected Systems / Modules',
 		proposed_implementation_date: 'Proposed Implementation Date',
 		target_closure_date: 'Target Closure Date',
 		implementation_window_start: 'Implementation Window Start',
-		implementation_window_end: 'Implementation Window End'
-	} satisfies Partial<Record<keyof DraftForm, string>>;
+		implementation_window_end: 'Implementation Window End',
+		reason_for_change: 'Reason for Change',
+		business_impact: 'Business Impact',
+		expected_downtime: 'Expected Downtime',
+		requires_testing: 'Requires Testing',
+		requires_training: 'Requires Training',
+		risk_rationale: 'Risk Rationale',
+		key_risks_mitigations: 'Key Risks & Mitigations',
+		high_level_implementation_plan: 'High-Level Implementation Plan',
+		validation_approach: 'Validation Approach',
+		success_criteria: 'Success Criteria',
+		rollback_backout_plan: 'Rollback / Backout Plan',
+		assigned_approver_id: 'Assigned Approver',
+		comments_for_approver: 'Comments for Approver',
+		comments: 'Comments',
+		actual_implementation_date: 'Actual Implementation Date',
+		post_implementation_issues: 'Post-Implementation Issues',
+		implementation_summary: 'Implementation Summary',
+		deviations_from_plan: 'Deviations from Plan',
+		validation_performed: 'Validation Performed',
+		implementation_evidence: 'Implementation Evidence',
+		decision: 'Decision',
+		risk_level: 'Risk Level',
+		decision_comments: 'Decision Comments',
+		final_decision: 'Final Decision',
+		final_comments: 'Final Comments'
+	};
+
+	/**
+	 * Prompt text, verbatim from the prototypes (flag 25). Fields absent from
+	 * here get none — the selects, whose first option is already the prompt,
+	 * and the two window times, whose `.field-hint` says what they are for.
+	 *
+	 * ⚠️ Applied through `mayEdit`, not `editable`, so a placeholder survives a
+	 * save rather than blinking out for its duration (decision 67's reasoning),
+	 * and never renders on a disabled control, where grey prompt text reads as
+	 * a value.
+	 *
+	 * Two prototype defects are deliberately not copied:
+	 * - ⚠️ `success_criteria`'s is WRITTEN, not ported — the one string on this
+	 *   page that came from nobody's document. `cc-form-initated-state.html`
+	 *   repeats Validation Approach's text there verbatim (:279 and :288), a
+	 *   copy-paste slip in the mock, so there was nothing to port. B1's
+	 *   "invent nothing visual" is **overridden by Lain for this one field**
+	 *   (decision 81): a prompt describing the wrong field is worse than one we
+	 *   wrote. Do not "restore" the prototype's text here.
+	 * - `actual_implementation_date` gets none at 8b. A `placeholder` on
+	 *   `<input type="date">` never renders — the browser draws `dd/mm/yyyy`.
+	 */
+	const PLACEHOLDERS: Partial<Record<EditableField, string>> = {
+		change_title: 'Enter a clear, descriptive title for this change',
+		change_description: 'Describe what will change, scope boundaries, and what is not changing',
+		affected_systems_modules: 'e.g. Kiosk App, Payment Service, Production Environment',
+		reason_for_change: 'Explain the business driver or justification',
+		business_impact: 'Describe impact on users, services, or operations',
+		risk_rationale: 'Explain why this change is considered low, medium, or high risk',
+		key_risks_mitigations:
+			'Identify the key risks associated with this change and describe the planned mitigation actions for each risk',
+		high_level_implementation_plan:
+			'Outline the high-level steps required to implement this change, including the sequence of activities and responsible parties where applicable',
+		validation_approach:
+			'Describe how the change will be verified or tested to confirm it has been implemented successfully',
+		success_criteria: 'Describe what must be true for this change to be considered successful',
+		rollback_backout_plan:
+			'Describe the actions required to restore the system or process to its previous state in the event of failure',
+		comments_for_approver: 'Optional comments for the approver',
+		comments: 'Add any additional information or context',
+		decision_comments: 'Provide rationale for your decision',
+		final_comments: 'Provide final approval comments'
+	};
+
+	/** `''` rather than `undefined`, so the attribute is absent when disabled. */
+	function placeholder(field: EditableField): string {
+		return mayEdit(field) ? (PLACEHOLDERS[field] ?? '') : '';
+	}
+
+	/**
+	 * The server's own length limits, swept from the Go rather than assumed.
+	 *
+	 * ⚠️ They are NOT all 2000. `change_title` is 200 and
+	 * `affected_systems_modules` is 500 — both `<input type="text">`, both easy
+	 * to assume otherwise. Enums, dates and the approver id carry no limit.
+	 * `cancellation_reason` is 500 and belongs to T3's modal, at step 10.
+	 *
+	 * Fields absent from here have no server limit and get no counter.
+	 */
+	const LIMITS: Partial<Record<EditableField, number>> = {
+		change_title: 200,
+		change_description: 2000,
+		affected_systems_modules: 500,
+		reason_for_change: 2000,
+		business_impact: 2000,
+		risk_rationale: 2000,
+		key_risks_mitigations: 2000,
+		high_level_implementation_plan: 2000,
+		validation_approach: 2000,
+		success_criteria: 2000,
+		rollback_backout_plan: 2000,
+		comments_for_approver: 2000,
+		comments: 2000,
+		decision_comments: 2000,
+		final_comments: 2000,
+		implementation_summary: 2000, // 8b
+		deviations_from_plan: 2000, // 8b
+		validation_performed: 2000 // 8b
+	};
+
+	/**
+	 * The counter under a length-limited field, or `null` when there is nothing
+	 * to say. Flag 36, revised.
+	 *
+	 * Without it, over-long text is a 400 after a round trip — "must be 2000
+	 * characters or fewer" — with no way to see how far over you are.
+	 *
+	 * ⚠️ `[...value].length`, never `value.length`. Go counts RUNES
+	 * (`len([]rune(s))`), which is code points, and spreading a string iterates
+	 * by code point too, so the two agree. `.length` counts UTF-16 units and
+	 * would read 2 for one emoji. (They diverge only on lone surrogates, which
+	 * a text input does not produce.) This is also why there is no `maxlength`
+	 * attribute: HTML would enforce the wrong unit, and a hard cap that
+	 * silently truncates is worse than a 400 that explains itself.
+	 *
+	 * The 80% threshold is a judgement call, not a requirement: below it the
+	 * counter is noise under thirteen fields at once, and 400 characters of
+	 * warning on a 2000-limit field is enough to notice before the wall.
+	 *
+	 * Client-side only. Nothing is blocked here — the server still decides.
+	 */
+	function lengthHint(field: EditableField, value: string): string | null {
+		const limit = LIMITS[field];
+		if (limit === undefined || !mayEdit(field)) return null;
+		const used = [...value].length;
+		if (used <= limit * 0.8) return null;
+		if (used > limit) return `${used} / ${limit} — ${used - limit} over the limit`;
+		return `${used} / ${limit}`;
+	}
+
+	// ── Save Draft ──────────────────────────────────────────────────────────
+
+	let saving = $state(false);
+	// A failed save, or an action refused before sending. It is kept apart from
+	// the load `error`, which replaces the whole form (decision 59's precedent).
+	// Named for the bar, not for Save, because the submit gate reports here too.
+	let actionError = $state<ErrorBody | null>(null);
+	// The neutral hint beside the button: "Saved …" or "No changes to save".
+	let actionNotice = $state<string | null>(null);
+
+	/**
+	 * The date and time inputs, whose ids equal their field keys. Four at 8a;
+	 * 8b adds `actual_implementation_date` when that input becomes editable.
+	 * Typed as `EditableField[]`, so a misspelt key fails `bun run check` and
+	 * the labels come from the one map above rather than a second list.
+	 */
+	const DATE_TIME_FIELDS: readonly EditableField[] = [
+		'proposed_implementation_date',
+		'target_closure_date',
+		'implementation_window_start',
+		'implementation_window_end'
+	];
 
 	/**
 	 * The labels of any date or time input holding a partial entry, such as
@@ -477,14 +743,14 @@
 	 * and clear a stored date. Only `validity.badInput` tells the two apart.
 	 *
 	 * The DOM is read directly, with `getElementById`, because `bind:this` is
-	 * not on B3's list. `saveDraft()` calls it fresh at click time, and so must
-	 * step 9's Submit. `incomplete` below is only its reactive copy.
+	 * not on B3's list. `saveDraft()` calls it fresh at click time, and so does
+	 * `submitGate()`. `incomplete` below is only its reactive copy.
 	 */
 	function incompleteDateTimes(): string[] {
 		const labels: string[] = [];
-		for (const [id, label] of Object.entries(DATE_TIME_LABELS)) {
-			const input = document.getElementById(id) as HTMLInputElement | null;
-			if (input?.validity.badInput) labels.push(label);
+		for (const field of DATE_TIME_FIELDS) {
+			const input = document.getElementById(field) as HTMLInputElement | null;
+			if (input?.validity.badInput) labels.push(FIELD_LABELS[field]);
 		}
 		return labels;
 	}
@@ -505,20 +771,41 @@
 	}
 
 	/**
-	 * One form value in the shape the API accepts. `''` becomes `null` for all
-	 * 24 alike. That is load-bearing on the four dates and times and on
-	 * `assigned_approver_id`, where `''` is a 400 (defect 17). On the rest it
-	 * only tidies. No trim: the server trims, and its whitespace set differs
-	 * from JavaScript's.
+	 * The five fields whose wire format is not the input's own string — flag
+	 * 5's set, exactly. Anything absent from here sends its value unchanged.
+	 *
+	 * Keyed on `EditableField` rather than on one form's keys, so ONE table
+	 * serves both save bodies and a misspelt key fails `bun run check`. The
+	 * `actual_implementation_date` entry has no caller until 8b; an uncalled
+	 * truth costs nothing (decision 63's precedent) and keeping the set whole
+	 * is what stops a second copy of this rule appearing beside the second
+	 * save.
 	 */
-	function toWire(key: keyof DraftForm, value: string): string | null {
+	const WIRE_FORMAT: Partial<Record<EditableField, 'date' | 'time'>> = {
+		proposed_implementation_date: 'date',
+		target_closure_date: 'date',
+		actual_implementation_date: 'date', // 8b
+		implementation_window_start: 'time',
+		implementation_window_end: 'time'
+	};
+
+	/**
+	 * One form value in the shape the API accepts.
+	 *
+	 * ⚠️ `'' → null` lives here and nowhere else. It is load-bearing on the
+	 * four dates and times and on `assigned_approver_id`, where `''` is a 400
+	 * (defect 17); on the rest it only tidies. A second copy of this rule
+	 * beside the second save body is how the body and the dirty gate would
+	 * drift apart, which is the argument decision 72 already made for reusing
+	 * the diff. No trim: the server trims, and its whitespace set differs from
+	 * JavaScript's.
+	 */
+	function toWire(field: EditableField, value: string): string | null {
 		if (value === '') return null;
-		switch (key) {
-			case 'proposed_implementation_date':
-			case 'target_closure_date':
+		switch (WIRE_FORMAT[field]) {
+			case 'date':
 				return dateOutput(value);
-			case 'implementation_window_start':
-			case 'implementation_window_end':
+			case 'time':
 				return timeOutput(value);
 			default:
 				return value;
@@ -526,28 +813,61 @@
 	}
 
 	/**
-	 * The save body: only the fields where the form differs from the record
-	 * (decision 65). The baseline is built by the same `toDraftForm` that built
-	 * `form`, so the comparison is plain string equality.
+	 * The fields where the form differs from the record (decision 65). The
+	 * baseline is built by the same function that built the form, so the
+	 * comparison is plain string equality with no per-type logic.
 	 *
-	 * Not all 24, for two reasons. A whole-form body sends every untouched
-	 * value back, so a tab loaded before another tab's save reverts that save,
-	 * and on the audited fields it writes `FieldUpdated` rows nobody made. And
-	 * a TIME stored with seconds would come back truncated to `HH:MM:00`.
+	 * Not the whole form, for two reasons. A whole-form body sends every
+	 * untouched value back, so a tab loaded before another tab's save reverts
+	 * that save, and on the audited fields it writes `FieldUpdated` rows nobody
+	 * made. And a TIME stored with seconds would come back truncated to
+	 * `HH:MM:00`.
 	 *
+	 * Generic over the key set, so "changed" has exactly one definition for
+	 * every save body. `K extends EditableField` is what lets the shared
+	 * `toWire` be called with a key TypeScript can check.
+	 */
+	function changes<K extends EditableField>(
+		current: Record<K, string>,
+		baseline: Record<K, string>
+	): Partial<Record<K, string | null>> {
+		const body: Partial<Record<K, string | null>> = {};
+		for (const key of Object.keys(baseline) as K[]) {
+			if (current[key] !== baseline[key]) body[key] = toWire(key, current[key]);
+		}
+		return body;
+	}
+
+	/**
 	 * The keys come from the `toDraftForm` literal, which is exactly the 24 of
 	 * `SaveDraftRequest`, so an unknown key (a 400) cannot be built. The cast is
 	 * for the enum fields: a bound select can only yield `''` or a member of its
-	 * `types.ts` array, and `''` is already `null` here.
+	 * `types.ts` array, and `''` is already `null` by here.
 	 */
 	function draftChanges(current: DraftForm, record: ChangeControlResponse): SaveDraftRequest {
-		const baseline = toDraftForm(record);
-		const body: Partial<Record<keyof DraftForm, string | null>> = {};
-		for (const key of Object.keys(baseline) as (keyof DraftForm)[]) {
-			if (current[key] !== baseline[key]) body[key] = toWire(key, current[key]);
-		}
-		return body as SaveDraftRequest;
+		return changes(current, toDraftForm(record)) as SaveDraftRequest;
 	}
+
+	/**
+	 * Whether a gate's fields hold values from a review that did not approve.
+	 *
+	 * T2 and T6 clear nothing — they set the state, the status and the updater
+	 * and no more — so after a rejection the record keeps the old Decision and
+	 * comments (A10). `Reject` then sits beside a status of `Not Submitted`,
+	 * which reads as a contradiction, and after a resubmission beside
+	 * `Pending`, which reads as a decision already taken. Hence `!== 'Approved'`
+	 * rather than a test on one status: it covers both, and Cancelled too.
+	 *
+	 * The controls themselves are right to show the values — the approver
+	 * reopening the gate must see what they wrote last time. It is the screen
+	 * that has to say what they are.
+	 */
+	const leftoverImplDecision = $derived(
+		cc !== null && cc.decision !== null && cc.implementation_approval_status !== 'Approved'
+	);
+	const leftoverFinalDecision = $derived(
+		cc !== null && cc.final_decision !== null && cc.final_approval_status !== 'Approved'
+	);
 
 	/**
 	 * Whether the screen differs from the record, or might (decision 72). It
@@ -560,24 +880,26 @@
 	 * bar reads it, once per flush. The hint re-renders only when the boolean
 	 * flips.
 	 *
-	 * ⚠️ STEP 9. T2 ignores field values, so this is the only guard against
+	 * ⚠️ T2 and T6 ignore field values, so this is the only guard against
 	 * submitting unsaved edits (A2). Submit is not `disabled`, because
 	 * `global.css` has no `.btn:disabled` and a disabled button looks enabled.
-	 * Its click handler must refuse, with a message in the action bar, before
-	 * the modal opens, if `saving`, `dirty`, or `incompleteDateTimes()` is
-	 * non-empty (a fresh read, not `incomplete`). It must check `dirty` again
-	 * just before the POST, unless the open modal locks the form.
+	 * `submitGate()` below is where that refusal lives.
+	 *
+	 * One term per savable slice, each gated on the predicate that owns it, so
+	 * exactly one diff runs per recompute and 8b adds a term rather than
+	 * rewriting the expression. The approver's two gates contribute nothing:
+	 * they have no save, so there is nothing for them to be unsaved from.
 	 */
 	const dirty = $derived(
 		cc !== null &&
-			form !== null &&
-			(incomplete.length > 0 || Object.keys(draftChanges(form, cc)).length > 0)
+			(incomplete.length > 0 ||
+				(canSaveDraft() && draftForm !== null && Object.keys(draftChanges(draftForm, cc)).length > 0))
 	);
 
 	/**
-	 * `PUT /changecontrols/{ccID}`. What each outcome does to `cc` and `form` is
+	 * `PUT /changecontrols/{ccID}`. What each outcome does to `cc` and `draftForm` is
 	 * recorded in PROGRESS.md for 7d:
-	 * - 200: `setRecord`, which rebuilds `form` from the server's copy.
+	 * - 200: `setRecord`, which rebuilds `draftForm` from the server's copy.
 	 * - 409: refetch, per A8.2, because the record has left Initiated.
 	 * - Anything else: both untouched, so the edits stay on screen.
 	 *
@@ -585,23 +907,23 @@
 	 * and retries.
 	 */
 	async function saveDraft() {
-		if (saving || cc === null || form === null) return;
-		saveError = null;
-		saveNotice = null;
+		if (saving || cc === null || draftForm === null) return;
+		actionError = null;
+		actionNotice = null;
 
 		const incomplete = incompleteDateTimes();
 		if (incomplete.length > 0) {
 			const one = incomplete.length === 1;
-			saveError = {
+			actionError = {
 				error: `${incomplete.join(', ')} ${one ? 'is' : 'are'} incomplete. Finish or clear ${one ? 'it' : 'them'} before saving.`
 			};
 			return;
 		}
 
 		// An empty body is a 400, `No fields to update`, so nothing is sent.
-		const body = draftChanges(form, cc);
+		const body = draftChanges(draftForm, cc);
 		if (Object.keys(body).length === 0) {
-			saveNotice = 'No changes to save';
+			actionNotice = 'No changes to save';
 			return;
 		}
 
@@ -624,22 +946,122 @@
 			// The client's clock, because a no-op save does not move
 			// `last_updated_on`. The timestamp keeps the hint true after later
 			// typing.
-			saveNotice = `Saved ${formatDateTime(new Date().toISOString())}`;
+			actionNotice = `Saved ${formatDateTime(new Date().toISOString())}`;
 		} else {
-			saveError = result.error;
+			actionError = result.error;
 			if (result.status === 409) load(ccId);
 		}
+	}
+
+	// ── Submitting a signed transition ──────────────────────────────────────
+
+	/**
+	 * ⚠️ SCAFFOLDING — THE E-SIGNATURE MODAL'S INSERTION POINT.
+	 *
+	 * Every caller reaches this line only once `submitGate()` has passed, which
+	 * is exactly the moment `showEsigModal(meaning)` should open. Replace the
+	 * assignment; do not add beside it.
+	 *
+	 * This comment sits on the constant rather than at a call site so that
+	 * deleting one caller cannot strand it. `tsconfig` has no `noUnusedLocals`,
+	 * so nothing in the build will notice a leftover: **flag 45 tracks the
+	 * number of USES**.
+	 *
+	 * ⚠️ Count them with `rg '\?\? SIGNATURE_NOT_BUILT' src/`, which matches the
+	 * call sites only. A bare `rg SIGNATURE_NOT_BUILT` also matches this comment
+	 * block and the one on the handlers below, so it over-reads — and its total
+	 * moves whenever either comment is edited, this sentence included. A check
+	 * that looks precise and is not.
+	 *
+	 *   after 8a  2 uses   the two Submit Decisions
+	 *   after 8b  3 uses   + Submit for Final Approval
+	 *   step 11   2 uses   the implementation gate's goes
+	 *   step 13   0 uses   the final gate's and Submit for Final Approval's go,
+	 *                      and this declaration and both comments go with them
+	 *
+	 * Step 9 adds none: T2's Submit arrives already wired to the modal.
+	 */
+	const SIGNATURE_NOT_BUILT = 'Electronic signature is not built yet.';
+
+	/**
+	 * The client-side half of a signed transition (A7.4).
+	 *
+	 * The API validates presence and business rules BEFORE it checks the
+	 * signature, so a modal opened while a check would fail asks the user to
+	 * sign something the server is about to reject. This runs those checks
+	 * first, and returns a message when the transition must not be offered.
+	 *
+	 * ⚠️ `incompleteDateTimes()` is read FRESH here, not through `incomplete`
+	 * (decision 73). The reactive copy is refreshed by two events, and flag 41
+	 * records that another browser's date picker could produce a partial entry
+	 * without either one.
+	 *
+	 * `values` is the buffer holding what the user has typed for this state's
+	 * mandatory fields. `implementation_evidence` is in `MANDATORY` but has no
+	 * form value — 8b checks it against the record instead.
+	 */
+	function submitGate(values: Record<string, string>): string | null {
+		// Unreachable — every caller is inside `{#if cc && …}` — but it is what
+		// narrows `cc` for the `MANDATORY[cc.current_state]` lookup below.
+		if (cc === null) return 'The record is still loading.';
+		if (saving) return 'A save is in progress. Try again in a moment.';
+		if (dirty) return 'Save your changes before submitting.';
+
+		const incomplete = incompleteDateTimes();
+		if (incomplete.length > 0) {
+			const one = incomplete.length === 1;
+			return `${incomplete.join(', ')} ${one ? 'is' : 'are'} incomplete. Finish or clear ${one ? 'it' : 'them'} before submitting.`;
+		}
+
+		const missing = MANDATORY[cc.current_state]
+			.filter((field) => (values[field] ?? '') === '')
+			.map((field) => FIELD_LABELS[field]);
+		if (missing.length > 0) {
+			return `Cannot submit: ${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} required.`;
+		}
+		return null;
+	}
+
+	/**
+	 * Submit Decision, once per gate.
+	 *
+	 * ⚠️ NOT one shared handler. The gate CHECKS are shared, in `submitGate()`
+	 * above, because they are the same checks. What follows them is not: the
+	 * implementation gate posts T4/T5 at step 11 and the final gate posts T7/T8
+	 * at step 13, with different endpoints, different meanings and different
+	 * bodies. One handler would have to be split by whichever step came first,
+	 * and it would hold a single `SIGNATURE_NOT_BUILT` reference that neither
+	 * step could remove on its own — which is exactly what flag 45's count
+	 * exists to prevent.
+	 *
+	 * Both are synchronous throughout: no request, no `await`, so no in-flight
+	 * window. Steps 11 and 13 open one when the modal lands, and that is where
+	 * `dirty` is read a second time (decision 74).
+	 */
+	function submitImplDecision() {
+		if (implDecision === null) return;
+		actionError = null;
+		actionNotice = null;
+		actionError = { error: submitGate(implDecision) ?? SIGNATURE_NOT_BUILT };
+	}
+
+	function submitFinalDecision() {
+		if (finalDecision === null) return;
+		actionError = null;
+		actionNotice = null;
+		actionError = { error: submitGate(finalDecision) ?? SIGNATURE_NOT_BUILT };
 	}
 </script>
 
 {#if loading}
 	<p>Loading…</p>
-{:else if cc && form}
+{:else if cc && draftForm && implDecision && finalDecision}
 	<!-- Every cc-form prototype uses `.page-header`, which has no bottom margin.
 	     The prototypes get their gap from the info banner that always follows
 	     it (`.info-banner` has `margin: var(--spacing-xl) 0`). This page renders
-	     a banner only for Closed and Cancelled (decision 54), so without the
-	     wrapper the header sat flush against the first card.
+	     no banner at all for one combination — an Initiated record seen by
+	     anyone but its owner — so without the wrapper the header sat flush
+	     against the first card.
 
 	     The wrapper is the list screens' `.page-header-with-action`, used for
 	     its `margin-bottom: var(--spacing-xl)`. It has a single child, so its
@@ -658,10 +1080,66 @@
 		</header>
 	</div>
 
-	<!-- Only the two banners that read the same for every role. The other four
-	     states' banners address someone who can act ("Before you submit",
-	     "Review required"), so each arrives with its state's role step. -->
-	{#if cc.current_state === 'Closed'}
+	<!-- Decision 54 deferred four banners to "its state's role step"; this is
+	     that step for three of them. Two variants per state: the person who can
+	     act, and everyone else. Text is the prototypes', with one exception.
+
+	     ⚠️ "You will be notified" IS DROPPED from all three non-actor banners.
+	     Phase 1 has no SMTP (FR-6.4.1) — the Go logs `notification pending` and
+	     sends nothing — so it is a promise the system cannot keep, for every
+	     role. Decision 34 set the precedent by dropping the Admin dashboard's
+	     "change controls you're involved with" *because it was false*, and
+	     decision 43 did the same again; the precedent covers factual claims,
+	     not just wording. Each banner keeps its heading and a complete, true
+	     first sentence, so nothing is invented to fill the gap. Flag 46 records
+	     the three sentences for restoration with FR-6.4.1. -->
+	{#if cc.current_state === 'Initiated'}
+		{#if isOwner()}
+			<div class="info-banner">
+				<strong>Before you submit</strong><br />
+				Fill out the change control details below. Fields marked with <strong>*</strong> are
+				mandatory. Once submitted, this change will be sent for implementation approval.
+			</div>
+		{/if}
+	{:else if cc.current_state === 'Pending Implementation Approval'}
+		{#if isAssignedApprover()}
+			<div class="info-banner">
+				<strong>Review required</strong><br />
+				Please review this change request and provide your approval decision below.
+			</div>
+		{:else}
+			<div class="info-banner">
+				<strong>Awaiting approval</strong><br />
+				This change has been submitted and is pending implementation approval.
+			</div>
+		{/if}
+	{:else if cc.current_state === 'In Implementation'}
+		{#if isOwner()}
+			<div class="info-banner">
+				<strong>Implementation in progress</strong><br />
+				This change has been approved for implementation. Complete the implementation details
+				below and attach supporting evidence (e.g., logs, screenshots, test results). When ready,
+				submit for Final Approval.
+			</div>
+		{:else}
+			<div class="info-banner">
+				<strong>Implementation in progress</strong><br />
+				The change owner is completing implementation details.
+			</div>
+		{/if}
+	{:else if cc.current_state === 'Pending Final Approval'}
+		{#if isAssignedApprover()}
+			<div class="info-banner">
+				<strong>Review required</strong><br />
+				Please review this change request and provide your final approval decision below.
+			</div>
+		{:else}
+			<div class="info-banner">
+				<strong>Awaiting final approval</strong><br />
+				This change has been submitted for final approval and is awaiting review.
+			</div>
+		{/if}
+	{:else if cc.current_state === 'Closed'}
 		<div class="info-banner">
 			<strong>Change Closed</strong><br />
 			This change has been fully reviewed, approved, and closed. No further action is required.
@@ -725,8 +1203,18 @@
 				id="change_title"
 				class="form-control"
 				disabled={!editable('change_title')}
-				bind:value={form.change_title}
+				placeholder={placeholder('change_title')}
+				bind:value={draftForm.change_title}
 			/>
+			<!-- Flag 36, revised: the server's limit made visible before the
+			     round trip, not after it. `lengthHint` returns null below 80%,
+			     so this is silent in the ordinary case. Called twice rather than
+			     held in an `{@const}`, which is not on B3's list; it is a pure
+			     function over two values. ⚠️ This field's limit is 200, not the
+			     2000 most of the others carry. -->
+			{#if lengthHint('change_title', draftForm.change_title)}
+				<div class="field-hint">{lengthHint('change_title', draftForm.change_title)}</div>
+			{/if}
 		</div>
 
 		<div class="form-group">
@@ -738,8 +1226,12 @@
 				class="form-control"
 				rows="4"
 				disabled={!editable('change_description')}
-				bind:value={form.change_description}
+				placeholder={placeholder('change_description')}
+				bind:value={draftForm.change_description}
 			></textarea>
+			{#if lengthHint('change_description', draftForm.change_description)}
+				<div class="field-hint">{lengthHint('change_description', draftForm.change_description)}</div>
+			{/if}
 		</div>
 
 		<!-- Every select iterates its array from types.ts, so the option values
@@ -751,7 +1243,7 @@
 					id="change_type"
 					class="form-control"
 					disabled={!editable('change_type')}
-					bind:value={form.change_type}
+					bind:value={draftForm.change_type}
 				>
 					<option value="">Select type</option>
 					{#each CHANGE_TYPES as option}
@@ -768,7 +1260,7 @@
 					id="change_category"
 					class="form-control"
 					disabled={!editable('change_category')}
-					bind:value={form.change_category}
+					bind:value={draftForm.change_category}
 				>
 					<option value="">Select category</option>
 					{#each CHANGE_CATEGORIES as option}
@@ -785,7 +1277,7 @@
 					id="department_function"
 					class="form-control"
 					disabled={!editable('department_function')}
-					bind:value={form.department_function}
+					bind:value={draftForm.department_function}
 				>
 					<option value="">Select department</option>
 					{#each DEPARTMENT_FUNCTIONS as option}
@@ -804,8 +1296,15 @@
 				id="affected_systems_modules"
 				class="form-control"
 				disabled={!editable('affected_systems_modules')}
-				bind:value={form.affected_systems_modules}
+				placeholder={placeholder('affected_systems_modules')}
+				bind:value={draftForm.affected_systems_modules}
 			/>
+			<!-- ⚠️ 500 here, not 2000. -->
+			{#if lengthHint('affected_systems_modules', draftForm.affected_systems_modules)}
+				<div class="field-hint">
+					{lengthHint('affected_systems_modules', draftForm.affected_systems_modules)}
+				</div>
+			{/if}
 		</div>
 
 		<h3 class="section-subtitle">Planning</h3>
@@ -822,7 +1321,7 @@
 					disabled={!editable('proposed_implementation_date')}
 					oninput={recheckDateTimes}
 					onkeyup={recheckDateTimes}
-					bind:value={form.proposed_implementation_date}
+					bind:value={draftForm.proposed_implementation_date}
 				/>
 			</div>
 
@@ -837,7 +1336,7 @@
 					disabled={!editable('target_closure_date')}
 					oninput={recheckDateTimes}
 					onkeyup={recheckDateTimes}
-					bind:value={form.target_closure_date}
+					bind:value={draftForm.target_closure_date}
 				/>
 			</div>
 		</div>
@@ -852,7 +1351,7 @@
 					disabled={!editable('implementation_window_start')}
 					oninput={recheckDateTimes}
 					onkeyup={recheckDateTimes}
-					bind:value={form.implementation_window_start}
+					bind:value={draftForm.implementation_window_start}
 				/>
 				<div class="field-hint">Optional (recommended for IT changes)</div>
 			</div>
@@ -866,7 +1365,7 @@
 					disabled={!editable('implementation_window_end')}
 					oninput={recheckDateTimes}
 					onkeyup={recheckDateTimes}
-					bind:value={form.implementation_window_end}
+					bind:value={draftForm.implementation_window_end}
 				/>
 				<div class="field-hint">Optional (recommended for IT changes)</div>
 			</div>
@@ -886,8 +1385,12 @@
 				class="form-control"
 				rows="3"
 				disabled={!editable('reason_for_change')}
-				bind:value={form.reason_for_change}
+				placeholder={placeholder('reason_for_change')}
+				bind:value={draftForm.reason_for_change}
 			></textarea>
+			{#if lengthHint('reason_for_change', draftForm.reason_for_change)}
+				<div class="field-hint">{lengthHint('reason_for_change', draftForm.reason_for_change)}</div>
+			{/if}
 		</div>
 
 		<div class="form-group">
@@ -899,8 +1402,12 @@
 				class="form-control"
 				rows="3"
 				disabled={!editable('business_impact')}
-				bind:value={form.business_impact}
+				placeholder={placeholder('business_impact')}
+				bind:value={draftForm.business_impact}
 			></textarea>
+			{#if lengthHint('business_impact', draftForm.business_impact)}
+				<div class="field-hint">{lengthHint('business_impact', draftForm.business_impact)}</div>
+			{/if}
 		</div>
 
 		<div class="grid-3">
@@ -912,7 +1419,7 @@
 					id="expected_downtime"
 					class="form-control"
 					disabled={!editable('expected_downtime')}
-					bind:value={form.expected_downtime}
+					bind:value={draftForm.expected_downtime}
 				>
 					<option value="">Select</option>
 					{#each EXPECTED_DOWNTIME as option}
@@ -929,7 +1436,7 @@
 					id="requires_testing"
 					class="form-control"
 					disabled={!editable('requires_testing')}
-					bind:value={form.requires_testing}
+					bind:value={draftForm.requires_testing}
 				>
 					<option value="">Select</option>
 					{#each REQUIRES_TESTING as option}
@@ -946,7 +1453,7 @@
 					id="requires_training"
 					class="form-control"
 					disabled={!editable('requires_training')}
-					bind:value={form.requires_training}
+					bind:value={draftForm.requires_training}
 				>
 					<option value="">Select</option>
 					{#each REQUIRES_TRAINING as option}
@@ -965,8 +1472,12 @@
 				class="form-control"
 				rows="3"
 				disabled={!editable('risk_rationale')}
-				bind:value={form.risk_rationale}
+				placeholder={placeholder('risk_rationale')}
+				bind:value={draftForm.risk_rationale}
 			></textarea>
+			{#if lengthHint('risk_rationale', draftForm.risk_rationale)}
+				<div class="field-hint">{lengthHint('risk_rationale', draftForm.risk_rationale)}</div>
+			{/if}
 		</div>
 
 		<div class="form-group">
@@ -978,8 +1489,14 @@
 				class="form-control"
 				rows="3"
 				disabled={!editable('key_risks_mitigations')}
-				bind:value={form.key_risks_mitigations}
+				placeholder={placeholder('key_risks_mitigations')}
+				bind:value={draftForm.key_risks_mitigations}
 			></textarea>
+			{#if lengthHint('key_risks_mitigations', draftForm.key_risks_mitigations)}
+				<div class="field-hint">
+					{lengthHint('key_risks_mitigations', draftForm.key_risks_mitigations)}
+				</div>
+			{/if}
 		</div>
 	</section>
 
@@ -996,8 +1513,14 @@
 				class="form-control"
 				rows="5"
 				disabled={!editable('high_level_implementation_plan')}
-				bind:value={form.high_level_implementation_plan}
+				placeholder={placeholder('high_level_implementation_plan')}
+				bind:value={draftForm.high_level_implementation_plan}
 			></textarea>
+			{#if lengthHint('high_level_implementation_plan', draftForm.high_level_implementation_plan)}
+				<div class="field-hint">
+					{lengthHint('high_level_implementation_plan', draftForm.high_level_implementation_plan)}
+				</div>
+			{/if}
 		</div>
 
 		<div class="form-group">
@@ -1009,8 +1532,12 @@
 				class="form-control"
 				rows="3"
 				disabled={!editable('validation_approach')}
-				bind:value={form.validation_approach}
+				placeholder={placeholder('validation_approach')}
+				bind:value={draftForm.validation_approach}
 			></textarea>
+			{#if lengthHint('validation_approach', draftForm.validation_approach)}
+				<div class="field-hint">{lengthHint('validation_approach', draftForm.validation_approach)}</div>
+			{/if}
 		</div>
 
 		<div class="form-group">
@@ -1022,8 +1549,12 @@
 				class="form-control"
 				rows="2"
 				disabled={!editable('success_criteria')}
-				bind:value={form.success_criteria}
+				placeholder={placeholder('success_criteria')}
+				bind:value={draftForm.success_criteria}
 			></textarea>
+			{#if lengthHint('success_criteria', draftForm.success_criteria)}
+				<div class="field-hint">{lengthHint('success_criteria', draftForm.success_criteria)}</div>
+			{/if}
 		</div>
 
 		<div class="form-group">
@@ -1035,14 +1566,42 @@
 				class="form-control"
 				rows="3"
 				disabled={!editable('rollback_backout_plan')}
-				bind:value={form.rollback_backout_plan}
+				placeholder={placeholder('rollback_backout_plan')}
+				bind:value={draftForm.rollback_backout_plan}
 			></textarea>
+			{#if lengthHint('rollback_backout_plan', draftForm.rollback_backout_plan)}
+				<div class="field-hint">
+					{lengthHint('rollback_backout_plan', draftForm.rollback_backout_plan)}
+				</div>
+			{/if}
 		</div>
 	</section>
 
 	<!-- ================== Implementation Details ================== -->
 	<section class="card">
 		<h2>Implementation Details</h2>
+
+		<!-- Flag 25's section level: why these controls are disabled, said once
+		     per card rather than once per field. Text verbatim from the
+		     prototypes. Only this card needs one — everywhere else the state's
+		     info banner already answers it. After the gate has passed there is
+		     nothing left to explain, so Pending Final Approval, Closed and
+		     Cancelled get none. The control is never replaced by the
+		     explanation (decision 52). -->
+		{#if cc.current_state === 'Initiated' || cc.current_state === 'Pending Implementation Approval'}
+			<div class="section-note">
+				These fields will become available once the change is approved for implementation.
+			</div>
+		{:else if cc.current_state === 'In Implementation'}
+			{#if isOwner()}
+				<div class="section-note">
+					Complete the implementation details below and attach supporting evidence before
+					submitting for final approval.
+				</div>
+			{:else}
+				<div class="section-note">The change owner is currently completing these fields.</div>
+			{/if}
+		{/if}
 
 		<div class="grid-2">
 			<div class="form-group">
@@ -1156,7 +1715,7 @@
 				id="assigned_approver_id"
 				class="form-control"
 				disabled={!editable('assigned_approver_id')}
-				bind:value={form.assigned_approver_id}
+				bind:value={draftForm.assigned_approver_id}
 			>
 				<option value="">Select Approver</option>
 				{#each approverOptions(approvers, cc) as approver}
@@ -1175,14 +1734,44 @@
 				class="form-control"
 				rows="3"
 				disabled={!editable('comments_for_approver')}
-				bind:value={form.comments_for_approver}
+				placeholder={placeholder('comments_for_approver')}
+				bind:value={draftForm.comments_for_approver}
 			></textarea>
+			{#if lengthHint('comments_for_approver', draftForm.comments_for_approver)}
+				<div class="field-hint">
+					{lengthHint('comments_for_approver', draftForm.comments_for_approver)}
+				</div>
+			{/if}
 		</div>
 
 		<h3 class="section-subtitle">Implementation Approval</h3>
 
-		<!-- ⚠️ T2 does not clear these three. After a T5 rejection they still
-		     read Reject while the status reads Not Submitted (A10). -->
+		<!-- Flag 25 / decision 56, the half owed to this card. Decision 52
+		     replaced the prototypes' `.field-na` boxes with empty disabled
+		     controls, which was right for the architecture — but those boxes
+		     carried an EXPLANATION ("Not applicable – Pending submission"), and
+		     without it five empty controls sit here with nothing saying why.
+
+		     ⚠️ The leftover case is worse than unexplained. T2 does not clear
+		     these three, so after a T5 rejection Decision still reads Reject
+		     beside a status of Not Submitted — a contradiction on its face —
+		     and after a resubmission beside Pending, which reads as a decision
+		     already taken. The note is what makes it legible, and the approver
+		     reopening the gate is exactly who needs it. -->
+		{#if leftoverImplDecision}
+			<div class="section-note">
+				These are the previous review's values. This change was rejected and returned for revision;
+				a new decision replaces them.
+			</div>
+		{:else if cc.current_state === 'Initiated'}
+			<div class="section-note">
+				Completed by the assigned approver once this change has been submitted for implementation
+				approval.
+			</div>
+		{:else if cc.current_state === 'Pending Implementation Approval' && !isAssignedApprover()}
+			<div class="section-note">Awaiting the assigned approver's decision.</div>
+		{/if}
+
 		<div class="grid-2">
 			<div class="form-group">
 				<label for="decision">Decision{#if required('decision')} *{/if}</label>
@@ -1190,7 +1779,7 @@
 					id="decision"
 					class="form-control"
 					disabled={!editable('decision')}
-					value={cc.decision ?? ''}
+					bind:value={implDecision.decision}
 				>
 					<option value="">Select decision</option>
 					{#each DECISIONS as option}
@@ -1205,7 +1794,7 @@
 					id="risk_level"
 					class="form-control"
 					disabled={!editable('risk_level')}
-					value={cc.risk_level ?? ''}
+					bind:value={implDecision.risk_level}
 				>
 					<option value="">Select risk level</option>
 					{#each RISK_LEVELS as option}
@@ -1224,8 +1813,14 @@
 				class="form-control"
 				rows="3"
 				disabled={!editable('decision_comments')}
-				value={cc.decision_comments ?? ''}
+				placeholder={placeholder('decision_comments')}
+				bind:value={implDecision.decision_comments}
 			></textarea>
+			{#if lengthHint('decision_comments', implDecision.decision_comments)}
+				<div class="field-hint">
+					{lengthHint('decision_comments', implDecision.decision_comments)}
+				</div>
+			{/if}
 		</div>
 
 		<div class="grid-2">
@@ -1244,7 +1839,24 @@
 
 		<h3 class="section-subtitle">Final Approval</h3>
 
-		<!-- ⚠️ T6 does not clear these two either (A10). -->
+		<!-- The same, for the second gate. T6 does not clear these two either,
+		     so a T8 rejection leaves Final Decision reading Reject (A10). The
+		     "not yet" note covers three states here, not one: these fields stay
+		     empty until the record reaches Pending Final Approval. -->
+		{#if leftoverFinalDecision}
+			<div class="section-note">
+				These are the previous review's values. This change was rejected and returned to
+				implementation; a new decision replaces them.
+			</div>
+		{:else if cc.current_state === 'Initiated' || cc.current_state === 'Pending Implementation Approval' || cc.current_state === 'In Implementation'}
+			<div class="section-note">
+				Completed by the assigned approver once implementation is finished and submitted for final
+				approval.
+			</div>
+		{:else if cc.current_state === 'Pending Final Approval' && !isAssignedApprover()}
+			<div class="section-note">Awaiting the assigned approver's final decision.</div>
+		{/if}
+
 		<div class="form-group">
 			<label for="final_decision"
 				>Final Decision{#if required('final_decision')} *{/if}</label
@@ -1253,7 +1865,7 @@
 				id="final_decision"
 				class="form-control"
 				disabled={!editable('final_decision')}
-				value={cc.final_decision ?? ''}
+				bind:value={finalDecision.final_decision}
 			>
 				<option value="">Select decision</option>
 				{#each DECISIONS as option}
@@ -1271,8 +1883,12 @@
 				class="form-control"
 				rows="3"
 				disabled={!editable('final_comments')}
-				value={cc.final_comments ?? ''}
+				placeholder={placeholder('final_comments')}
+				bind:value={finalDecision.final_comments}
 			></textarea>
+			{#if lengthHint('final_comments', finalDecision.final_comments)}
+				<div class="field-hint">{lengthHint('final_comments', finalDecision.final_comments)}</div>
+			{/if}
 		</div>
 
 		<div class="grid-2">
@@ -1325,8 +1941,12 @@
 				class="form-control"
 				rows="4"
 				disabled={!editable('comments')}
-				bind:value={form.comments}
+				placeholder={placeholder('comments')}
+				bind:value={draftForm.comments}
 			></textarea>
+			{#if lengthHint('comments', draftForm.comments)}
+				<div class="field-hint">{lengthHint('comments', draftForm.comments)}</div>
+			{/if}
 		</div>
 
 		<!-- The one field hidden by state (BRD Rule P6, decision 51). T3's modal
@@ -1401,8 +2021,10 @@
 {/if}
 
 <!-- ================== Actions ================== -->
-<!-- Back to List and Save Draft. Submit, Cancel and the decisions arrive at
-     steps 9, 10, 11 and 13.
+<!-- Back to List, Save Draft and Submit Decision. T2's Submit and Cancel arrive
+     at steps 9 and 10; Submit for Final Approval at 8b. Every button is gated
+     by the same predicates the controls are, so a role that can edit nothing
+     here sees nothing but Back to List.
 
      The save message sits in the bar, beside the button. `.form-actions` is
      sticky, so the message is visible wherever the user clicked Save; a block
@@ -1422,24 +2044,40 @@
 	</div>
 
 	<div class="actions-right">
-		{#if saveError}
+		{#if actionError}
 			<!-- A save's `issues` can only list unknown keys, which the body
 			     cannot contain. They are rendered anyway, raw, as A8.1 asks. -->
 			<!-- The class carries a modal-stacking margin that a flex row centres against, lifting the box half of --spacing-lg above the button. -->
 			<div class="esig-error show" style:margin-bottom="0">
-				{saveError.error}{#if 'issues' in saveError}: {saveError.issues.join(', ')}{/if}
+				{actionError.error}{#if 'issues' in actionError}: {actionError.issues.join(', ')}{/if}
 			</div>
 		{:else if dirty}
 			<!-- Outranks "Saved …" without clearing it (decision 75). Undo back
 			     to the saved values and that message returns, still true. -->
 			<span class="field-hint">Unsaved changes</span>
-		{:else if saveNotice}
-			<span class="field-hint">{saveNotice}</span>
+		{:else if actionNotice}
+			<span class="field-hint">{actionNotice}</span>
 		{/if}
 		{#if canSaveDraft()}
 			<button type="button" class="btn secondary" onclick={saveDraft} disabled={saving}>
 				<i class="bi bi-save"></i>
 				{saving ? 'Saving…' : 'Save Draft'}
+			</button>
+		{/if}
+		<!-- Submit Decision, for the ASSIGNED approver only — the API authorises
+		     by `assigned_approver_id`, not by role (A7.6). Both read the record
+		     through `cc`, which `load()` clears, so neither can survive into a
+		     load against a record no longer on screen. Not `disabled` while the
+		     gate would refuse: `global.css` has no `.btn:disabled`, so a
+		     disabled button looks live and a click on it says nothing
+		     (decision 74). The handlers refuse out loud instead. -->
+		{#if cc && isAssignedApprover() && cc.current_state === 'Pending Implementation Approval'}
+			<button type="button" class="btn primary" onclick={submitImplDecision}>
+				<i class="bi bi-check-circle"></i> Submit Decision
+			</button>
+		{:else if cc && isAssignedApprover() && cc.current_state === 'Pending Final Approval'}
+			<button type="button" class="btn primary" onclick={submitFinalDecision}>
+				<i class="bi bi-check-circle"></i> Submit Decision
 			</button>
 		{/if}
 	</div>

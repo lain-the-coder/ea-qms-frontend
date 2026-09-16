@@ -145,7 +145,9 @@
 							{#each dashboard.pending_approvals as item}
 								<li>
 									<span class="dashboard-list-id">{item.cc_id}</span>
-									<span class="dashboard-list-title">{item.change_title ?? 'Untitled'}</span>
+									<span class="dashboard-list-title">
+										{#if item.change_title}{item.change_title}{:else}<em>Untitled</em>{/if}
+									</span>
 									<span class="table-badge {BADGE[item.current_state]}">
 										{GATE_LABEL[item.current_state] ?? item.current_state}
 									</span>
@@ -180,7 +182,9 @@
 							{#each dashboard.my_drafts as item}
 								<li>
 									<span class="dashboard-list-id">{item.cc_id}</span>
-									<span class="dashboard-list-title">{item.change_title ?? 'Untitled'}</span>
+									<span class="dashboard-list-title">
+										{#if item.change_title}{item.change_title}{:else}<em>Untitled</em>{/if}
+									</span>
 									<span class="table-badge {BADGE[item.current_state]}">{item.current_state}</span>
 								</li>
 							{/each}
@@ -301,7 +305,11 @@
 							{#each dashboard.recent_activity as row}
 								<tr>
 									<td class="table-id">{row.cc_id}</td>
-									<td class="table-title">{row.change_title ?? 'Untitled'}</td>
+									<!-- `<em>` for a missing title, as in the two cards above and in
+									     ChangeControlList (decision 33, revised). -->
+									<td class="table-title">
+										{#if row.change_title}{row.change_title}{:else}<em>Untitled</em>{/if}
+									</td>
 									<td>
 										<span class="table-badge {BADGE[row.current_state]}">{row.current_state}</span>
 									</td>

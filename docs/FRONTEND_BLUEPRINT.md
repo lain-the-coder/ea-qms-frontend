@@ -388,6 +388,37 @@ its own, and the `UPDATE` runs only when some value differs.
   `null` and clear the stored date. Check `input.validity.badInput` on the date
   and time inputs, and refuse the save.
 
+**And of `PUT /{ccID}/implementation`**, audited against
+`HandlerSaveImplementationDetails`. It is the same machine with a different
+whitelist, so everything above holds — the `json.RawMessage` map, the seed from
+the locked row, unknown keys before the transaction, trimming, `""` → `null`, a
+no-op that writes nothing and leaves `last_updated_on` where it was, and the
+re-read before the commit. What differs:
+
+- **Five keys, not 24:** `actual_implementation_date`,
+  `post_implementation_issues`, `implementation_summary`,
+  `deviations_from_plan`, `validation_performed`. The unknown-key 400 reads
+  `Some fields cannot be edited in the In Implementation state`.
+- **The state check is `In Implementation`**, so the 409 is that.
+- ⚠️ **`implementation_evidence` is not one of the five** — see A10. It is the
+  one field the Security Matrix marks editable that this endpoint rejects.
+- **No business rules at all.** Any date is accepted here; "cannot be in the
+  future" is checked at **T6**, not at save.
+- ⚠️ **`actual_implementation_date` is a DATE column taking RFC 3339**, like the
+  four in `SaveDraftRequest`. `"2026-09-01"` is a 400; send
+  `"2026-09-01T00:00:00Z"`.
+- **It writes no audit rows, and that is correct.** BRD **SC-5** names the nine
+  critical fields — Decision, Risk Level, Decision Comments, Final Decision,
+  Final Comments, Cancellation Reason, Target Closure Date, Proposed
+  Implementation Date, Assign Approver — and none of these five is among them.
+  All nine are audited elsewhere: three in the draft save, three at T4/T5, two at
+  T7/T8, one at T3. **Expect no `audit_logs` row after an implementation save**;
+  its absence is conformance, not a gap.
+
+⚠️ **The draft save's approver audit row is written under
+`field_name = 'assign_approver'`**, not `assigned_approver_id`. The other two
+audited draft fields use their column names. A psql check needs the right string.
+
 ## A4. The en-dash trap
 
 ⚠️ **The single most likely silent failure in this port.**
@@ -550,21 +581,91 @@ Pre-fill the field with the current user's email.
 
 ### A7.3 A failed signature changes nothing
 
-401, an audit row recording the attempt, and the record **untouched**. Retrying is
-safe when the *user* retries. The wrapper must **never** retry it
-automatically, because each attempt writes its own `SignatureFailed` row
-(A1.2). Never store the password; clear it when the modal closes.
+**401 `Invalid credentials`** — that exact string, from all five transitions. It
+is the only thing separating a failed signature from a dead token, and `api.ts`
+branches on it (A1.2). The record is **untouched**, and an audit row records the
+attempt.
+
+Retrying is safe when the *user* retries. The wrapper must **never** retry it
+automatically, because each attempt writes its own `SignatureFailed` row.
+Never store the password; clear it when the modal closes.
+
+Two mechanics behind the row, both deliberate:
+- It is written with `cfg.db`, **not** the transaction, so it survives the
+  `defer tx.Rollback()` that undoes everything else.
+- If writing it fails, that is logged and the handler **still returns 401**.
+
+⚠️ **A failed signature does not always leave a row.** If password verification
+returns an *error* rather than a mismatch, the handler returns **500 `Something
+went wrong` with no `SignatureFailed` row**. So a 500 from a transition is not a
+signature failure, and must not be reported as one.
 
 ### A7.4 The signature comes last
 
-The API validates presence, then business rules, then the signature. A validation
-failure never reaches the signature check — so the modal should only open once the
-client-side checks pass.
+The API validates the request, then the record, then the signature, in all five
+transitions — so the modal should only open once the client-side checks pass.
+
+⚠️ **But "presence" means two different things, and the order differs.**
+- **T2 and T6** validate the **stored row**: 404, then 403, then 409, then the
+  presence checks and date rules, then the signature.
+- **T3, T4/T5 and T7/T8** validate the **body the user just typed**, and those
+  checks run **before the transaction opens** — so they precede the 404, the 403
+  and the 409. An approver submitting a decision with blank comments on a record
+  that has already moved on gets `Decision Comments cannot be blank` (400), not
+  the 409.
+
+Both orders put the signature last, which is what A7.4 is for. The difference
+matters when reading an error: a 400 does not prove the record is still in the
+state you think it is.
 
 ### A7.5 Show the meaning being signed
 
-Each transition has a fixed meaning string. Display it in the modal so the user
-knows what they are attesting to. **ASCII hyphens** — see A4.
+Each **transition** has a fixed meaning string — seven constants, one per
+transition. Display it in the modal so the user knows what they are attesting
+to. **ASCII hyphens** — see A4.
+
+⚠️ **Per transition, not per endpoint.** The two decision endpoints each cover
+two transitions, and pick between them from the submitted field:
+
+| Endpoint | `Approve` | `Reject` |
+|---|---|---|
+| `POST …/decision` | T4 `Approved - Implementation Approval` | T5 `Rejected - Implementation Approval` |
+| `POST …/final-decision` | T7 `Approved - Final Approval` | T8 `Rejected - Final Approval` |
+
+So the modal's meaning must follow the user's choice live. Both approver
+prototypes hardcode the approve string.
+
+### A7.6 Authorisation is by RECORD, not by role
+
+⚠️ **None of the five transition routes carries `requireRole`.** All are mounted
+behind `middlewareAuth` alone, and each handler authorises by comparing the
+caller to the record:
+
+| Transitions | Check | 403 when |
+|---|---|---|
+| T2, T3, T6 | `user.ID == cc.ChangeOwnerID` | not this record's owner |
+| T4/T5, T7/T8 | `cc.AssignedApproverID != nil && *… == user.ID` | **not this record's assignee** |
+
+**This is where the Security Matrix and the API diverge.** The Matrix's
+"Approver" column is a *role*; the API cares only about assignment. An Approver
+who is not this record's assignee gets 403 `Forbidden`, so enabling the gate for
+every Approver — which is what reading the Matrix literally produces — offers an
+action that cannot succeed.
+
+The client predicate mirrors the server and adds **no** role check the server
+does not make. Compare on the id, never the name (A11). Same principle as the
+draft save, whose 403 is ownership and not role.
+
+### A7.7 A transition returns the whole record
+
+All five return **200 with the full `ChangeControlResponse`**, re-fetched inside
+the transaction through the same query `GET /{ccID}` uses, with the five user
+joins. The read happens **before the commit**, so a failure at any point leaves
+nothing written and the error and the record's state agree.
+
+**So the caller sets the record from the response and does not refetch.** A
+refetch would be a second round trip for data already in hand, and it would open
+a window in which the form shows the old state.
 
 ## A8. Errors
 
@@ -772,6 +873,27 @@ cards and recent activity are all ordered `last_updated_on DESC`.
   never means rewriting its markup.
 - **System fields no role can ever edit stay as `.meta-value` text:** CC ID, the
   approval By and On values, the statuses and Actual Closure Date.
+
+⚠️ **The Matrix's columns are ROLES; the API authorises by IDENTITY.** Read the
+columns as follows, and never as a role check:
+
+| Matrix column | The predicate | Because |
+|---|---|---|
+| CC Owner | `cc.change_owner_id === user.id` | `HandlerSaveDraft`, `HandlerSaveImplementationDetails`, the upload, T2, T3 and T6 all compare `change_owner_id`; none has a role check |
+| Approver | `cc.assigned_approver_id === user.id` | T4/T5 and T7/T8 compare `assigned_approver_id`. **A non-assigned Approver gets 403** |
+| Viewer, Admin | never editable | they appear as the actor in no state |
+
+Only a CC Owner can own a record and only an Approver can be assigned one
+(A9.2), so the identity check subsumes the role check without stating it. See
+**A7.6**.
+
+⚠️ **`In Implementation` is six cells in the Matrix but five on the save
+endpoint.** `implementation_evidence` is editable and mandatory, but it is not
+in the implementation save's whitelist — it goes through
+`POST …/files/implementation_evidence`. Sending it in the save body is a 400
+carrying `issues: ["implementation_evidence"]`. So the state has **two** writers,
+and a diff built from `SaveImplementationRequest`'s keys cannot reach the wrong
+one.
 
 **Nothing is hidden by state.** A field with no value yet renders empty. This
 departs from BRD Rule P5, whose "Not applicable" boxes the prototypes draw as
@@ -1419,10 +1541,13 @@ express the Security Matrix.
 
 ## B9. Build order
 
-Nineteen steps: the seventeen numbered ones, with step 7 split into 7a–7d, plus
-7a+ and 7d+. Amended at 7d, which added 7d+. Each is independently verifiable against the running API — do not
-start one until the previous works end to end, and do not merge two because they
-feel contiguous.
+Nineteen steps: the seventeen numbered ones, with step 7 split into 7a–7d and
+step 8 into 8a–8b, plus 7a+ and 7d+. Amended at 7d, which added 7d+, and at
+step 8, which split it. **A split does not change the count** — 7a–7d are still
+step 7 and 8a–8b are still step 8; only the two `+` steps are additions, which
+is why the table has more rows than the number says. Each step is independently
+verifiable against the running API — do not start one until the previous works
+end to end, and do not merge two because they feel contiguous.
 
 | # | Step | Proves |
 |---|---|---|
@@ -1438,11 +1563,12 @@ feel contiguous.
 | **7c** | **Save Draft** — send only the changed fields, and handle the response | The absent/null/value model, the write-shaped type, RFC 3339 conversion, and the plain 400. Amended at 7c: a save's `issues` lists only unknown keys, which a body built from `SaveDraftRequest`'s keys cannot contain |
 | **7d** | **Dirty tracking** — compare current state to the last-loaded record | The gate that step 9 depends on |
 | **7d+** | **Navigation guard**: `beforeNavigate` asks before leaving a dirty form, the browser's native dialog covers reload and tab close, and there is **no prompt on a forced sign-out** | `dirty`'s first consumer, and a guard that stands aside once the session has ended. Added at 7d. See below |
-| 8 | **The `Initiated` role views**: the same form as Approver, Viewer and Admin | The Security Matrix as `{#if}` and `disabled`, and **the Viewer's read-only view** |
+| **8a** | **The permissions restructure**: `editable()` switches on state, the approver's two gate slices become editable for the **assigned** approver only, every other role and state is locked, and flag 25's section notes, placeholders and the four remaining info-banners land. Widened at step 8 — it was "the `Initiated` role views" | The Security Matrix as `{#if}` and `disabled`, **authorisation by identity rather than role** (A7.6), and the Viewer's read-only view. The gate buttons run their client-side checks and stop where the modal will open |
+| **8b** | **The `In Implementation` slice and its save** — `PUT /{ccID}/implementation`, Save Draft in that state, and Submit for Final Approval's gate. Absorbed from step 12 | The second save endpoint, and dirty tracking over a second form object. See below |
 | 9 | **T2 submit + the e-signature modal** | The first transition end to end, and the save-then-submit gate |
 | 10 | **T3 cancel** | The one modal that collects **a reason *and* credentials together** — unlike every other transition |
 | 11 | **Approver flow** — the queue, and the implementation decision (T4/T5) | The second role, and the first approval gate |
-| 12 | **The `In Implementation` view** — save implementation details, then **file upload** | The second save endpoint, then `FormData`, the part named `file`, and the PDF/size limits |
+| 12 | **File upload** — the evidence control. Narrowed at step 8: the save half moved to 8b | `FormData`, the part named `file`, and the PDF/size limits |
 | 13 | **T6 + the final decision (T7/T8)**. The signature history panel moved to 7a | The remaining gates, and the full state machine exercised |
 | 14 | **File download** | Blob handling, `Content-Disposition` |
 | 15 | **Admin settings — user management** | **Not a variation of anything else:** inline edit rows, two separate endpoints for the pencil and the toggle, and a 409 carrying `blocked_cc_ids` |
@@ -1492,6 +1618,28 @@ a creator separately from the owner, so "Created by me" and "Owned by me" are
 the same filter.
 
 Step 9 introduces the signature once, before it appears in five more places.
+
+**Step 8 is split into 8a and 8b, and it absorbed step 12's save half.** As
+written, step 8 was "the Initiated role views" and the three other editable
+slices waited for steps 11, 12 and 13 — so until then the form had one working
+slice and three dead ones.
+
+Pulling them forward runs into one asymmetry. The approver's five gate fields
+need no save: nothing writes them but the transition itself, so they can be made
+editable on their own. The owner's five `In Implementation` fields **do** save,
+through a second endpoint. Making them editable without it would give the owner
+five live controls with no Save button, no "Unsaved changes" hint and no
+navigation guard — because `dirty` is built on the draft diff — so edits would
+vanish on any navigation with nothing on screen saying so. That is the defect
+7d+ exists to prevent, in a different state.
+
+So the line falls between them:
+- **8a** is everything that needs no new endpoint.
+- **8b** brings the `In Implementation` slice **and** its save together, so those
+  fields are never editable without something to save them with.
+
+Step 12 keeps the upload alone, which is the genuinely different mechanism
+(`FormData`) and deserves its own step either way.
 
 **Upload cannot come earlier than step 12**, because the only upload field is
 `implementation_evidence` and it is writable only in `In Implementation` — a state

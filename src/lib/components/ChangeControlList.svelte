@@ -410,7 +410,14 @@
 						{#each rows as cc}
 							<tr>
 								<td class="table-id">{cc.cc_id}</td>
-								<td class="table-title">{cc.change_title ?? 'Untitled'}</td>
+								<!-- `<em>` so a record with no title is distinguishable from one
+								     actually titled "Untitled" (decision 33, revised). It is a
+								     placeholder standing in for a value, not a value. No new CSS.
+								     Truthiness rather than `??`, so a stored `''` reads the same
+								     way — the server nulls whitespace, but this does not rely on it. -->
+								<td class="table-title">
+									{#if cc.change_title}{cc.change_title}{:else}<em>Untitled</em>{/if}
+								</td>
 								<td>
 									<span class="table-badge {BADGE[cc.current_state]}">{cc.current_state}</span>
 								</td>
