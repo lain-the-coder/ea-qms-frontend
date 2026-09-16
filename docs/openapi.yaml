@@ -819,10 +819,18 @@ components:
       description: |
         Required by every transition. **The email must match the logged-in user**
         (BR-8.8.3) — signing on behalf of someone else is rejected even with
-        valid credentials. Comparison is case-insensitive.
+        valid credentials. Comparison is case-insensitive. The email is trimmed;
+        **the password is not**.
 
-        A failed signature returns 401, writes a `SignatureFailed` audit row, and
-        **leaves the record untouched** — safe to retry.
+        A rejected signature (wrong email or wrong password) returns 401
+        `Invalid credentials`, writes a `SignatureFailed` audit row, and **leaves
+        the record untouched** — safe to retry. A password-verification *error*,
+        as opposed to a mismatch, is a **500 with no `SignatureFailed` row**, so a
+        500 from a transition is not a signature failure.
+
+        Blank `email` or `password` is a plain 400 (`Email cannot be blank`,
+        `Password cannot be blank`), checked before the record is read — so it
+        precedes the 404, 403 and 409.
       required: [email, password]
       properties:
         email: { type: string, format: email }
@@ -1529,10 +1537,21 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ChangeControlResponse" }
         "400":
-          description: Mandatory fields missing and/or date rules failed — all collected.
+          description: |
+            Two shapes.
+
+            - **`ErrorResponse`**, checked before the record is read, so before
+              the 404, 403 and 409: `CC-ID cannot be blank`, `Invalid request
+              body`, `Email cannot be blank`, `Password cannot be blank`.
+            - **`ValidationErrorResponse`**, against the stored record: missing
+              mandatory fields (bare labels) and failed date rules (full
+              sentences), all collected in one `issues` array, labels first.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/ValidationErrorResponse" }
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ErrorResponse"
+                  - $ref: "#/components/schemas/ValidationErrorResponse"
               example:
                 error: "Cannot submit: some requirements are not met"
                 issues:
@@ -1585,7 +1604,11 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ChangeControlResponse" }
         "400":
-          description: Reason missing, whitespace-only, or over 500 characters.
+          description: |
+            The first failing check, in this order: a malformed body (`Invalid
+            request body`), a reason that is missing or whitespace-only, a blank
+            email, a blank password, then a reason over 500 characters. All run
+            before the record is read, so they precede the 404, 403 and 409.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
@@ -1680,7 +1703,7 @@ paths:
         - `actual_implementation_date` **must not be in the future**
         - **An evidence file must exist**, or submission is blocked
 
-        All four failures collect into one response.
+        Every failure collects into one response.
 
         On success `final_approval_status` → `Pending`. The record's fields and
         its evidence file are then **locked** — the save and upload endpoints
@@ -1698,10 +1721,21 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ChangeControlResponse" }
         "400":
-          description: Mandatory fields missing, a future date, and/or no evidence file.
+          description: |
+            Two shapes, as for T2.
+
+            - **`ErrorResponse`**, checked before the record is read, so before
+              the 404, 403 and 409: `CC-ID cannot be blank`, `Invalid request
+              body`, `Email cannot be blank`, `Password cannot be blank`.
+            - **`ValidationErrorResponse`**, against the stored record: missing
+              evidence, missing mandatory fields and a future date, all
+              collected.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/ValidationErrorResponse" }
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ErrorResponse"
+                  - $ref: "#/components/schemas/ValidationErrorResponse"
               example:
                 error: "Cannot submit: some requirements are not met"
                 issues:

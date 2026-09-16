@@ -613,10 +613,16 @@ export interface SaveImplementationRequest {
 /**
  * Required by every transition. The email must match the logged-in user
  * (BR-8.8.3) — signing on behalf of someone else is rejected even with valid
- * credentials. The comparison is case-insensitive.
+ * credentials. The comparison is case-insensitive. The email is trimmed;
+ * ⚠️ the password is NOT, so never trim it on the client.
  *
- * A failed signature returns 401, writes a `SignatureFailed` audit row and
- * leaves the record untouched, so it is safe to retry.
+ * A rejected signature returns 401 `Invalid credentials`, writes a
+ * `SignatureFailed` audit row and leaves the record untouched, so it is safe
+ * to retry. ⚠️ A password-verification ERROR is a 500 with NO row, so a 500
+ * from a transition is not a signature failure (defect 19).
+ *
+ * A blank email or password is a plain 400, checked before the record is
+ * read, so it precedes the 404, 403 and 409 — T2 and T6 included.
  */
 export interface ESignatureCredentials {
 	email: string;

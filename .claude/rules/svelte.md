@@ -139,7 +139,21 @@ properties.
 error's `.esig-error` in the form's sticky action bar. The class's modal-stacking
 margin lifts the box in a flex row with `align-items: center`. **Any `.esig-error`
 inside a flex row needs the same cancellation.** Do not remove it as an unneeded
-directive.
+directive. **The bar holds one plain sentence by construction** — anything with
+`issues` goes to a dialog (decision 90).
+
+⚠️ **Every button label in a flex action bar uses non-breaking spaces** (flag 39,
+option B): `Back&nbsp;to&nbsp;List`, or `'Save Draft'` inside a JS string.
+- **Why:** a flex item shrinks to its narrowest possible width, which for a `.btn`
+  is its longest word. One long sentence in a half-screen window wrapped every
+  button word by word.
+- **Why this fix:** `&nbsp;` makes the whole label that narrowest width, so the
+  message wraps instead of the buttons.
+- **Rejected:** `nowrap` in `global.css` (canonical, five copies) and a per-button
+  `style:`.
+- ⚠️ **A new bar button without it brings the defect back silently**, and only at
+  narrow widths. Step 10's Cancel CC is the next one. Single-word in-flight labels
+  (`Saving…`, `Signing…`) need nothing.
 
 **Avoid `:global`** — `global.css` is imported once at the root and applies
 everywhere. Reaching for `:global` usually means the markup drifted from the
@@ -225,6 +239,37 @@ The two decision objects are **input buffers**. No endpoint writes `decision`,
 the transition itself, so there is nothing for them to be unsaved *from*.
 **Do not fold them into `dirty`**: the submit gate refuses while `dirty`, so an
 approver's own typing would block their own submission.
+
+⚠️ **Two dialogs in the markup, one `dialog` state** (decisions 88 and 90).
+- **The two:** `kind: 'sign'` is the e-signature modal, opened with
+  `openEsig(meaning, send)`. `kind: 'requirements'` is the requirements dialog,
+  opened **only** by `fail()`, for a body with `issues`.
+- **They share nothing but `.modal > .modal-content`**, which is two copies of that
+  markup. Step 10's cancel modal is the third, so the extraction question is
+  step 10's. B5 makes `EsigModal` earn extraction.
+- **No pre-flight state in the signature modal.** Its text would be untrue above a
+  list of reasons you cannot sign.
+- **While either is open, `editable()` locks every control** (`&& dialog === null`),
+  and `save()` and every submit handler return. The overlay blocks the pointer
+  but not Tab.
+- **No Escape-to-close and no focus management** (flag 52). No prototype has
+  either. This is the second modal and step 10 brings a third, so someone should
+  decide it deliberately.
+- **Known cost (flag 51):** after the requirements dialog is dismissed, nothing
+  marks a date that is present but too early.
+- **Steps 11 and 13 choose the meaning at open time** and build `send` from a
+  **snapshot** of their buffer, so what is shown is what is signed.
+- **`closeDialog()` clears the email and password on every way out**, including
+  `load()`.
+
+⚠️ **The bar shows `shownError`, not `actionError`** (decision 89). Set errors
+only through `fail(body, pinned)`.
+- **The rule:** an error hides once `screenKey()` (the four form objects plus
+  `incomplete`) differs from the key taken when the error was set.
+- **The exception:** only a 409 is pinned, because its reload changes the screen
+  by design.
+- **Known cost (flag 50):** an error that is still true can hide. For example, an
+  over-long Comments 400 hides when Title is edited.
 
 ⚠️ **`load()` clears every one of them** before its first `await`, not just the
 draft. A stale buffer keeps that state's action button live against a record no

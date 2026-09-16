@@ -319,9 +319,12 @@ gets a 409, because the state has moved.
 A draft can be saved empty, and a date valid on Monday may be invalid by
 Thursday — so those rules can only apply at submission.
 
-**Mirror the presence checks client-side** so the signature modal never opens on a
-form that will be rejected. The API enforces them regardless; the client-side copy
-is purely to avoid asking for a password before a certain failure.
+**Mirror the presence checks and the date rules client-side** so the signature
+modal never opens on a form that will be rejected. The API enforces them
+regardless; the client-side copy is purely to avoid asking for a password before a
+certain failure. Amended at step 9: T2 checks presence **and** the business-day
+rules in one pass, so a presence-only mirror let a present-but-early date through
+to the modal (A5.3).
 
 ## A3. Partial updates — absent, null, value
 
@@ -477,6 +480,28 @@ Weekdays only; public holidays are not modelled. **Computed in UTC** — in a UT
 deployment, a submission between midnight and the offset is evaluated against the
 previous calendar day.
 
+The rule is `date.Before(businessDaysFrom(today, n))`: the date must not be
+**earlier** than the boundary. `businessDaysFrom` steps one day at a time and steps
+over weekends, so the boundary is always a weekday. **The date itself need not be
+one** — a Saturday after the boundary is valid. There is nothing to disable
+day-by-day in the picker; there are two boundary dates.
+
+**The client mirror (step 9):**
+- **The gate** compares the stored `YYYY-MM-DD` against the boundary in the submit
+  gate, computed **at click time**, never cached. The gate already refuses while
+  dirty, so the form's strings are the stored row, and lexical `<` is Go's
+  `Before`. The messages are the Go's sentences, word for word.
+- ⚠️ **UTC dates only.** Between 00:00 and 04:00 in Dubai the local date is a day
+  ahead of the server's, so a local-date boundary would be stricter than the
+  server for four hours a night. Use UTC getters and setters only.
+- **`min` on the two inputs** greys out days that can never pass. It is an
+  affordance, not the gate. It can go stale on a page left open overnight, but only
+  in the lenient direction, since the boundary only moves forward, and the gate
+  then refuses.
+- **The client can still disagree with the server** when midnight UTC falls between
+  the gate check and the server's check, or when the device clock is wrong near
+  midnight. The server is authoritative, and `Date` is not a CORS-exposed header.
+
 ### A5.4 `actual_implementation_date` must not be in the future
 
 Retrospective by nature. **Accepted at save, rejected at T6** — so a user can
@@ -590,6 +615,10 @@ Retrying is safe when the *user* retries. The wrapper must **never** retry it
 automatically, because each attempt writes its own `SignatureFailed` row.
 Never store the password; clear it when the modal closes.
 
+⚠️ **Never trim the password.** The Go trims the email and **not** the password,
+so a trimmed password with a leading or trailing space draws a false 401 and an
+audit row. The prototypes trim both.
+
 Two mechanics behind the row, both deliberate:
 - It is written with `cfg.db`, **not** the transaction, so it survives the
   `defer tx.Rollback()` that undoes everything else.
@@ -607,7 +636,11 @@ transitions — so the modal should only open once the client-side checks pass.
 
 ⚠️ **But "presence" means two different things, and the order differs.**
 - **T2 and T6** validate the **stored row**: 404, then 403, then 409, then the
-  presence checks and date rules, then the signature.
+  presence checks and date rules, then the signature. Amended at step 9: **they
+  also have body checks, which run first**, before the transaction opens. These
+  are `CC-ID cannot be blank`, `Invalid request body`, `Email cannot be blank` and
+  `Password cannot be blank`. So a blank password is a plain 400 even on a record
+  that has moved on, and the modal refuses both blanks before sending.
 - **T3, T4/T5 and T7/T8** validate the **body the user just typed**, and those
   checks run **before the transaction opens** — so they precede the 404, the 403
   and the 409. An approver submitting a decision with blank comments on a record
@@ -667,6 +700,12 @@ nothing written and the error and the record's state agree.
 refetch would be a second round trip for data already in hand, and it would open
 a window in which the form shows the old state.
 
+**The signature history is not in the response**, so after a 200 the caller
+refetches `GET …/signatures` alone. The rule above covers the record, not this
+separate resource (step 9). ⚠️ That GET is a second `await` after the 200 is
+checked, so it needs **its own** sequence check. Otherwise a navigation in between
+lands the old record's signatures on the new record's panel.
+
 ## A8. Errors
 
 ### A8.1 Two shapes
@@ -701,7 +740,24 @@ mean twenty round trips. Verified against the handlers — only
 issues array.
 
 **Render every item** when there is one, not just the first. But do not write a
-transition caller that *expects* one.
+transition caller that *expects* one: **T2 and T6 also return plain
+`ErrorResponse` 400s** for a blank email or password or a bad body (A7.4).
+
+**Where the list renders (step 9): a dialog, never the action bar.** The error's
+**shape** decides where it goes, not its length:
+- **A body with `issues` opens a requirements dialog.** The heading is `error`
+  verbatim, and every item is listed verbatim, one per line, in a `<ul>`. Bare
+  labels stay bare.
+- **A plain `{ error }` goes to the bar.**
+
+An `issues` array is the only error whose length depends on the data, from 1 item
+to 20. The first attempt joined the labels onto one line in the sticky bar.
+Twenty labels then squeezed the bar's buttons onto three lines, so the bar cannot
+hold this kind of message at any length. The client's submit gate returns the same
+shape as the server, so both open the same dialog.
+
+**Known cost:** once the dialog is dismissed, nothing marks a date that is present
+but too early. Errors beside the field (A8.2's 400 row) would fix it.
 
 ### A8.2 What each status means for the UI
 
@@ -1254,7 +1310,20 @@ component CSS custom properties.
 `.esig-error`'s `margin-bottom` spaces it inside the e-signature modal. A flex row
 with `align-items: center` centres against that margin, lifting the box half of
 `--spacing-lg` above the button. Any `.esig-error` placed inside a flex row needs
-the same cancellation.
+the same cancellation. **By construction the bar holds only one plain sentence:**
+anything with `issues` goes to a dialog (A8.1).
+
+⚠️ **That alone did not make the bar safe.** A flex item shrinks to its narrowest
+possible width, which for a `.btn` is its longest word. So at half-screen width, a
+single long sentence wrapped every button word by word. This was confirmed with
+DevTools closed.
+
+**The fix is non-breaking spaces in every bar button label**
+(`Back&nbsp;to&nbsp;List`, or ` ` in a JS string). It needs no CSS and no
+second `style:`. The rejected alternatives were `white-space: nowrap` in
+`global.css`, which is canonical and kept in five copies, and a `style:` on each
+button. **The cost is a convention:** a bar button added without it brings the
+defect back, silently and only at narrow widths.
 
 **Avoid `:global`** — `global.css` is imported once at the root and its classes
 apply everywhere already, so a `:global` escape hatch is a sign the markup drifted
@@ -1565,7 +1634,7 @@ end to end, and do not merge two because they feel contiguous.
 | **7d+** | **Navigation guard**: `beforeNavigate` asks before leaving a dirty form, the browser's native dialog covers reload and tab close, and there is **no prompt on a forced sign-out** | `dirty`'s first consumer, and a guard that stands aside once the session has ended. Added at 7d. See below |
 | **8a** | **The permissions restructure**: `editable()` switches on state, the approver's two gate slices become editable for the **assigned** approver only, every other role and state is locked, and flag 25's section notes, placeholders and the four remaining info-banners land. Widened at step 8 — it was "the `Initiated` role views" | The Security Matrix as `{#if}` and `disabled`, **authorisation by identity rather than role** (A7.6), and the Viewer's read-only view. The gate buttons run their client-side checks and stop where the modal will open |
 | **8b** | **The `In Implementation` slice and its save** — `PUT /{ccID}/implementation`, Save Draft in that state, and Submit for Final Approval's gate. Absorbed from step 12 | The second save endpoint, and dirty tracking over a second form object. See below |
-| 9 | **T2 submit + the e-signature modal** | The first transition end to end, and the save-then-submit gate |
+| 9 | **T2 submit + the e-signature modal** — written once, inline, and opened with a meaning and a sender, so steps 11 and 13 reuse it. Also: the date rules in the submit gate, a requirements dialog for every `issues` body, and the bar's error ordering (flag 42) | The first transition end to end, the save-then-submit gate, and the modal's three outcome paths: a rejected signature, a transport failure, and a failure about the record |
 | 10 | **T3 cancel** | The one modal that collects **a reason *and* credentials together** — unlike every other transition |
 | 11 | **Approver flow** — the queue, and the implementation decision (T4/T5) | The second role, and the first approval gate |
 | 12 | **File upload** — the evidence control. Narrowed at step 8: the save half moved to 8b | `FormData`, the part named `file`, and the PDF/size limits |

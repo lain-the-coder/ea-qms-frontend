@@ -2,7 +2,8 @@
 	The change-control form (B5): one page for every state and every role.
 	Step 7b binds the owner's 24 draft fields, and 7c saves them. Save Draft
 	sends only the fields that differ from the record. 7d shows, continuously,
-	whether any do: the gate step 9's Submit depends on.
+	whether any do: the gate step 9's Submit depends on. Step 9 adds T2 and
+	the one e-signature modal every signed transition opens.
 
 	Markup from docs/prototypes/owner/cc-form-closed.html, the one prototype
 	with every section populated. The other cc-form-* prototypes differ in which
@@ -40,7 +41,7 @@
 	import { onMount } from 'svelte';
 	import { afterNavigate, beforeNavigate } from '$app/navigation';
 	import { page } from '$app/state';
-	import { request } from '$lib/api';
+	import { request, type ApiResult } from '$lib/api';
 	import { auth } from '$lib/auth.svelte';
 	import { formatDateTime } from '$lib/format';
 	import {
@@ -63,6 +64,7 @@
 		type SaveDraftRequest,
 		type SaveImplementationRequest,
 		type SignatureItem,
+		type SignatureMeaning,
 		type SignatureListResponse,
 		type State,
 		type Transition
@@ -184,17 +186,24 @@
 	}
 
 	/**
-	 * Whether the control is enabled right now: permission, and no save in
-	 * flight. Every control's `disabled` comes from here, so the Security
-	 * Matrix lives in one function rather than in 34 attributes (decision 48).
+	 * Whether the control is enabled right now: permission, no save in flight,
+	 * and no signature modal open. Every control's `disabled` comes from here,
+	 * so the Security Matrix lives in one function rather than in 34 attributes
+	 * (decision 48).
 	 *
-	 * The lock is here and not in `mayEdit` because `required()` reads
+	 * The locks are here and not in `mayEdit` because `required()` reads
 	 * permission. Locking there too would drop every asterisk for the length of
-	 * each save. The lock exists because a save response rebuilds `draftForm`, so a
-	 * keystroke typed mid-save would be lost (flag 32).
+	 * each save. Two locks, two reasons:
+	 * - `saving`: a save response rebuilds `draftForm`, so a keystroke typed
+	 *   mid-save would be lost (flag 32).
+	 * - `dialog`: a modal's overlay blocks the pointer but not Tab. Without the
+	 *   lock a keyboard user could edit the form behind the signature modal,
+	 *   making it dirty after the gate passed, or changing a decision it is
+	 *   about to sign a snapshot of (decision 88). The requirements dialog
+	 *   locks too: it is a modal, so the form waits until it is dismissed.
 	 */
 	function editable(field: EditableField): boolean {
-		return mayEdit(field) && !saving;
+		return mayEdit(field) && !saving && dialog === null;
 	}
 
 	/**
@@ -430,8 +439,11 @@
 		implForm = null;
 		implDecision = null;
 		finalDecision = null;
+		// A dialog belongs to the record it was opened on. Back or Forward to
+		// another CC-ID closes it, and `mine` drops any response still in
+		// flight.
+		closeDialog();
 		error = null;
-		signaturesError = null;
 		approversError = null;
 		const path = `/changecontrols/${encodeURIComponent(id)}`;
 		// Three independent reads, in parallel. The signature history and the
@@ -441,9 +453,9 @@
 		// The approver list is fetched on every load, not only when the select
 		// is editable. Editability depends on the record, so a conditional fetch
 		// would have to wait for it, and its condition would copy `editable()`.
-		const [record, history, approverList] = await Promise.all([
+		const [record, historyOk, approverList] = await Promise.all([
 			request<ChangeControlResponse>('GET', path),
-			request<SignatureListResponse>('GET', `${path}/signatures`),
+			loadSignatures(id, mine),
 			request<ListApproversResponse>('GET', '/approvers')
 		]);
 		if (mine !== latest) return;
@@ -457,12 +469,6 @@
 			finalDecision = null;
 			error = record.error.error;
 		}
-		if (history.ok) {
-			signatures = history.data.signatures;
-		} else {
-			signatures = [];
-			signaturesError = history.error.error;
-		}
 		if (approverList.ok) {
 			approvers = approverList.data.approvers;
 		} else {
@@ -471,8 +477,38 @@
 		}
 		// A failed load is not "already loaded", so the next navigation to the
 		// same CC-ID tries again (step 6's recovery pattern).
-		if (!record.ok || !history.ok || !approverList.ok) lastId = null;
+		if (!record.ok || !historyOk || !approverList.ok) lastId = null;
 		loading = false;
+	}
+
+	/**
+	 * `GET …/signatures`, written to the history panel only if no newer load
+	 * has started since `mine` was taken. Returns whether it succeeded.
+	 *
+	 * Two callers: `load()`, and `sign()` after a 200. A transition's response
+	 * is the record alone, so the new signature row has to be fetched. A7.7's
+	 * "never refetch" covers the record, not this separate resource (Lain's
+	 * ruling at step 9).
+	 *
+	 * ⚠️ The guard is its own, after its own `await`. `sign()`'s check runs
+	 * when the 200 lands, and this GET is a second wait after that. A
+	 * navigation in between runs `load()`, which increments `latest`, so late
+	 * signatures are dropped rather than landing on the next record's panel.
+	 */
+	async function loadSignatures(id: string, mine: number): Promise<boolean> {
+		const history = await request<SignatureListResponse>(
+			'GET',
+			`/changecontrols/${encodeURIComponent(id)}/signatures`
+		);
+		if (mine !== latest) return history.ok;
+		if (history.ok) {
+			signatures = history.data.signatures;
+			signaturesError = null;
+		} else {
+			signatures = [];
+			signaturesError = history.error.error;
+		}
+		return history.ok;
 	}
 
 	/**
@@ -553,6 +589,61 @@
 	// (A5.2). This relies on the input having no `step`, which keeps it `HH:MM`.
 	function timeOutput(value: string): string | null {
 		return value === '' ? null : `0000-01-01T${value}:00Z`;
+	}
+
+	/**
+	 * T2's two business-day rules (A5.3), as `HandlerSubmitForImplApproval`
+	 * applies them: the date must not be EARLIER than `businessDaysFrom(today,
+	 * n)`. It does not have to be a business day itself — a Saturday after the
+	 * boundary is valid.
+	 */
+	const BUSINESS_DAYS: Partial<Record<EditableField, number>> = {
+		proposed_implementation_date: 2,
+		target_closure_date: 10
+	};
+
+	/**
+	 * The earliest date, as `YYYY-MM-DD`, that passes a business-day rule.
+	 * Mirrors the Go's `businessDaysFrom` line for line: step one day, then
+	 * step over Saturday and Sunday. `getUTCDay` numbers days as Go's
+	 * `time.Weekday` does, 0 Sunday and 6 Saturday.
+	 *
+	 * ⚠️ UTC throughout. The server's `today` is `time.Now().UTC()` truncated
+	 * to midnight. Between 00:00 and 04:00 in Dubai the LOCAL date is a day
+	 * ahead, so a local-date version would be stricter than the server for
+	 * four hours a night. Only UTC getters and setters are used, so this is
+	 * not A5.5's `new Date()` trap, which is about reading a DATE locally.
+	 *
+	 * Computed at every call, never cached, so a page left open overnight
+	 * still gates on today's boundary. A device clock that is wrong near
+	 * midnight UTC can still make the client briefly stricter or looser than
+	 * the server. The server is authoritative, and its clock is not readable
+	 * here (`Date` is not a CORS-exposed header).
+	 */
+	function earliestSubmitDate(businessDays: number): string {
+		const now = new Date();
+		const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+		for (let i = 0; i < businessDays; i++) {
+			d.setUTCDate(d.getUTCDate() + 1);
+			while (d.getUTCDay() === 6 || d.getUTCDay() === 0) d.setUTCDate(d.getUTCDate() + 1);
+		}
+		return d.toISOString().slice(0, 10);
+	}
+
+	/**
+	 * The `min` attribute on the two date inputs, so the native picker greys
+	 * out days that can never pass. An affordance only: the gate compares
+	 * strings in `submitGate()` and never reads `validity.rangeUnderflow`.
+	 *
+	 * It can go stale — Svelte re-evaluates it when the record or the form
+	 * changes, never when the clock does — but only in the lenient direction:
+	 * the boundary moves forward, so a stale `min` offers too many days, and
+	 * the gate then refuses with the server's own sentence. Nothing legitimate
+	 * is lost either: a date earlier than the boundary can never become valid.
+	 */
+	function minDate(field: EditableField): string | undefined {
+		const days = BUSINESS_DAYS[field];
+		return days !== undefined && mayEdit(field) ? earliestSubmitDate(days) : undefined;
 	}
 
 	/**
@@ -768,10 +859,57 @@
 	// ── Save Draft ──────────────────────────────────────────────────────────
 
 	let saving = $state(false);
-	// A failed save, or an action refused before sending. It is kept apart from
-	// the load `error`, which replaces the whole form (decision 59's precedent).
-	// Named for the bar, not for Save, because the submit gate reports here too.
-	let actionError = $state<ErrorBody | null>(null);
+
+	/**
+	 * A failed save or transition, or an action refused before sending. Kept
+	 * apart from the load `error`, which replaces the whole form (decision 59's
+	 * precedent). Named for the bar, not for Save, because every action
+	 * reports here.
+	 *
+	 * `screen` is the screen the error was about, as `screenKey()` read it when
+	 * the error was set, or `null` for an error pinned regardless of the
+	 * screen. Set it only through `fail()`.
+	 */
+	type ActionError = { body: ErrorBody; screen: string | null };
+	let actionError = $state<ActionError | null>(null);
+
+	/**
+	 * Everything the user can change on this page, as one string: the four
+	 * form objects and the partial-date list. `incomplete` is in it because a
+	 * partial date leaves the form value at `''`, so finishing the date changes
+	 * nothing else.
+	 */
+	function screenKey(): string {
+		return JSON.stringify([draftForm, implForm, implDecision, finalDecision, incomplete]);
+	}
+
+	/**
+	 * Reports a failure or a refusal. ⚠️ THE ONE PLACE THAT DECIDES WHERE IT
+	 * GOES, from the body's SHAPE — callers never choose (decision 90):
+	 *
+	 *   has `issues`   → the requirements dialog. The only error whose length
+	 *                    is data-driven (1 item or 20). Check 1 at step 9
+	 *                    proved the sticky bar cannot hold it: a 20-label
+	 *                    refusal squeezed the buttons onto three lines.
+	 *   plain `error`  → the bar. One sentence, written by one handler.
+	 *
+	 * Shape, not length: a threshold would be arbitrary, and would move one
+	 * refusal between homes as the user fixed fields. Client refusals
+	 * (`submitGate`) and server 400s have the same shape, so they land in the
+	 * same place and render identically (A8.1).
+	 *
+	 * `pinned` applies to the bar only, and is for a 409: its reload changes
+	 * the screen by design, and its message is what explains why the form
+	 * turned read-only, so it must not hide when the reload lands.
+	 */
+	function fail(body: ErrorBody, pinned = false) {
+		if ('issues' in body) {
+			closeDialog();
+			dialog = { kind: 'requirements', error: body.error, issues: body.issues };
+			return;
+		}
+		actionError = { body, screen: pinned ? null : screenKey() };
+	}
 	// The neutral hint beside the button: "Saved …" or "No changes to save".
 	let actionNotice = $state<string | null>(null);
 
@@ -994,6 +1132,30 @@
 	);
 
 	/**
+	 * The error the bar shows (flag 42, decision 89): the recorded one, while
+	 * the screen still matches the one it was about. Once the user changes
+	 * anything it hides, and "Unsaved changes" shows instead. Undo back to that
+	 * screen and it shows again — still true — which is decision 75's "hidden,
+	 * not cleared", applied to errors.
+	 *
+	 * ⚠️ KNOWN COST: it also hides errors that are STILL true (flag 50). A 400
+	 * for an over-long Comments hides as soon as Change Title is edited, while
+	 * Comments is still too long. Accepted as the better trade over a stale
+	 * error outranking the hint: the next Save or Submit returns the same 400,
+	 * so the error comes back when the user acts.
+	 *
+	 * Only plain `{ error }` bodies reach it: `fail()` sends anything with
+	 * `issues` to the requirements dialog instead (decision 90).
+	 *
+	 * Lazy like `dirty`: one stringify of about 35 strings when the bar reads it.
+	 */
+	const shownError = $derived(
+		actionError !== null && (actionError.screen === null || actionError.screen === screenKey())
+			? actionError.body
+			: null
+	);
+
+	/**
 	 * `PUT /changecontrols/{ccID}`. What each outcome does to `cc` and `draftForm` is
 	 * recorded in PROGRESS.md for 7d:
 	 * - 200: `setRecord`, which rebuilds `draftForm` from the server's copy.
@@ -1010,7 +1172,7 @@
 
 		const refusal = incompleteMessage('saving');
 		if (refusal !== null) {
-			actionError = { error: refusal };
+			fail({ error: refusal });
 			return;
 		}
 
@@ -1042,7 +1204,8 @@
 			// typing.
 			actionNotice = `Saved ${formatDateTime(new Date().toISOString())}`;
 		} else {
-			actionError = result.error;
+			// Only a 409 is pinned: its reload changes the screen (decision 89).
+			fail(result.error, result.status === 409);
 			if (result.status === 409) load(ccId);
 		}
 	}
@@ -1065,7 +1228,7 @@
 
 		const refusal = incompleteMessage('saving');
 		if (refusal !== null) {
-			actionError = { error: refusal };
+			fail({ error: refusal });
 			return;
 		}
 
@@ -1090,7 +1253,7 @@
 			setRecord(result.data);
 			actionNotice = `Saved ${formatDateTime(new Date().toISOString())}`;
 		} else {
-			actionError = result.error;
+			fail(result.error, result.status === 409);
 			if (result.status === 409) load(ccId);
 		}
 	}
@@ -1099,8 +1262,13 @@
 	 * Save Draft's click handler. One button in the bar, because the two saves
 	 * are mutually exclusive by state and rendering both would need the same
 	 * two predicates twice.
+	 *
+	 * Nothing saves while the signature modal is open: the overlay blocks the
+	 * pointer but not Tab, and a save then would change the stored row between
+	 * the gate and the signature.
 	 */
 	function save() {
+		if (dialog !== null) return;
 		if (canSaveDraft()) return saveDraft();
 		if (canSaveImplementation()) return saveImplementation();
 	}
@@ -1111,8 +1279,9 @@
 	 * ⚠️ SCAFFOLDING — THE E-SIGNATURE MODAL'S INSERTION POINT.
 	 *
 	 * Every caller reaches this line only once `submitGate()` has passed, which
-	 * is exactly the moment `showEsigModal(meaning)` should open. Replace the
-	 * assignment; do not add beside it.
+	 * is exactly the moment `openEsig(meaning, send)` should open. Replace the
+	 * `fail(…)` call; do not add beside it. `submitForImplApproval()` below is
+	 * the worked example.
 	 *
 	 * This comment sits on the constant rather than at a call site so that
 	 * deleting one caller cannot strand it. `tsconfig` has no `noUnusedLocals`,
@@ -1133,9 +1302,12 @@
 	 *   step 13   0 uses   the final gate's and Submit for Final Approval's go,
 	 *                      and this declaration and both comments go with them
 	 *
-	 * Step 9 adds none: T2's Submit arrives already wired to the modal.
+	 * Step 9 added none: T2's Submit arrived already wired to the modal.
+	 *
+	 * An `ErrorBody`, not a string, since `submitGate()` returns one. That
+	 * keeps the call sites' text matching flag 45's pattern.
 	 */
-	const SIGNATURE_NOT_BUILT = 'Electronic signature is not built yet.';
+	const SIGNATURE_NOT_BUILT: ErrorBody = { error: 'Electronic signature is not built yet.' };
 
 	/**
 	 * The client-side half of a signed transition (A7.4).
@@ -1153,19 +1325,24 @@
 	 * `values` is the buffer holding what the user has typed for this state's
 	 * mandatory fields. `implementation_evidence` is in `MANDATORY` but has no
 	 * form value — 8b checks it against the record instead.
+	 *
+	 * Returns an `ErrorBody`. The early refusals are a plain `{ error }`. The
+	 * requirements refusal has the SAME shape as T2's and T6's 400 — the Go's
+	 * own header, labels first, then rule sentences — so a client refusal and
+	 * a server rejection render through the same markup and read identically.
 	 */
-	function submitGate(values: Record<string, string>): string | null {
+	function submitGate(values: Record<string, string>): ErrorBody | null {
 		// Unreachable — every caller is inside `{#if cc && …}` — but it is what
 		// narrows the record for the lookups below. Captured into a `const`
 		// because `cc` is reassignable, so TypeScript drops the narrowing
 		// inside the filter callback.
-		if (cc === null) return 'The record is still loading.';
+		if (cc === null) return { error: 'The record is still loading.' };
 		const record = cc;
-		if (saving) return 'A save is in progress. Try again in a moment.';
-		if (dirty) return 'Save your changes before submitting.';
+		if (saving) return { error: 'A save is in progress. Try again in a moment.' };
+		if (dirty) return { error: 'Save your changes before submitting.' };
 
 		const refusal = incompleteMessage('submitting');
-		if (refusal !== null) return refusal;
+		if (refusal !== null) return { error: refusal };
 
 		// ⚠️ `implementation_evidence` is in MANDATORY and in EditableField, but
 		// it is in no form object — it has no control and no value, only an
@@ -1179,8 +1356,33 @@
 					: (values[field] ?? '') === ''
 			)
 			.map((field) => FIELD_LABELS[field]);
-		if (missing.length > 0) {
-			return `Cannot submit: ${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} required.`;
+
+		// ⚠️ T2's business-day rules, which the server checks in the SAME pass
+		// as presence (A5.3). Without them a present-but-early date passes this
+		// gate, opens the modal, collects a password, and draws a 400 the
+		// server was always going to return (A7.4).
+		//
+		// Only for a present date, as in the Go, so a date is never reported
+		// twice. `dirty` was refused above, so these strings ARE the stored row
+		// the server validates. `YYYY-MM-DD` compares lexically in date order,
+		// so `<` is Go's `Before`. The boundary is computed now, not at render,
+		// so a page left open overnight gates on today. The sentence is the
+		// Go's, word for word.
+		//
+		// T6's rule ("cannot be in the future") joins here at step 13 (flag 48).
+		const rules: string[] = [];
+		if (record.current_state === 'Initiated') {
+			for (const field of Object.keys(BUSINESS_DAYS) as EditableField[]) {
+				const days = BUSINESS_DAYS[field]!;
+				const value = values[field] ?? '';
+				if (value !== '' && value < earliestSubmitDate(days)) {
+					rules.push(`${FIELD_LABELS[field]} must be at least ${days} business days from today`);
+				}
+			}
+		}
+
+		if (missing.length > 0 || rules.length > 0) {
+			return { error: 'Cannot submit: some requirements are not met', issues: [...missing, ...rules] };
 		}
 		return null;
 	}
@@ -1198,21 +1400,22 @@
 	 * exists to prevent.
 	 *
 	 * Both are synchronous throughout: no request, no `await`, so no in-flight
-	 * window. Steps 11 and 13 open one when the modal lands, and that is where
-	 * `dirty` is read a second time (decision 74).
+	 * window. Steps 11 and 13 replace the `fail(…)` with `openEsig()`, choosing
+	 * the meaning from the decision and building `send` from a SNAPSHOT of the
+	 * buffer, so what the modal shows is exactly what is signed (A7.5).
 	 */
 	function submitImplDecision() {
-		if (implDecision === null) return;
+		if (implDecision === null || dialog !== null) return;
 		actionError = null;
 		actionNotice = null;
-		actionError = { error: submitGate(implDecision) ?? SIGNATURE_NOT_BUILT };
+		fail(submitGate(implDecision) ?? SIGNATURE_NOT_BUILT);
 	}
 
 	function submitFinalDecision() {
-		if (finalDecision === null) return;
+		if (finalDecision === null || dialog !== null) return;
 		actionError = null;
 		actionNotice = null;
-		actionError = { error: submitGate(finalDecision) ?? SIGNATURE_NOT_BUILT };
+		fail(submitGate(finalDecision) ?? SIGNATURE_NOT_BUILT);
 	}
 
 	/**
@@ -1227,10 +1430,195 @@
 	 * submitting a form whose edits were never saved (A2).
 	 */
 	function submitForFinalApproval() {
-		if (implForm === null) return;
+		if (implForm === null || dialog !== null) return;
 		actionError = null;
 		actionNotice = null;
-		actionError = { error: submitGate(implForm) ?? SIGNATURE_NOT_BUILT };
+		fail(submitGate(implForm) ?? SIGNATURE_NOT_BUILT);
+	}
+
+	/**
+	 * T2, the owner's submit out of `Initiated`. The gate, then the modal.
+	 *
+	 * ⚠️ T2 carries no field values and silently ignores any it is sent, so
+	 * `dirty` — refused inside `submitGate()` — is the only thing standing
+	 * between an owner and submitting edits that were never saved (A2).
+	 */
+	function submitForImplApproval() {
+		if (cc === null || draftForm === null || dialog !== null) return;
+		actionError = null;
+		actionNotice = null;
+		const refusal = submitGate(draftForm);
+		if (refusal !== null) {
+			fail(refusal);
+			return;
+		}
+		const path = `/changecontrols/${encodeURIComponent(cc.cc_id)}/submit`;
+		openEsig('Submitted for Implementation Approval', (credentials) =>
+			request<ChangeControlResponse>('POST', path, credentials)
+		);
+	}
+
+	// ── The dialogs ─────────────────────────────────────────────────────────
+
+	/**
+	 * TWO DIALOGS, ONE STATE. The markup has two blocks; this variable says
+	 * which is open, so both can never be open at once, the lock in
+	 * `editable()` reads one thing, and a server 400 swaps the signature
+	 * dialog for the requirements dialog in one assignment.
+	 *
+	 * `sign` — the e-signature modal (decision 88). One for every signed
+	 * transition.
+	 * - `meaning` is shown to the signer (A7.5). Typed as `SignatureMeaning`,
+	 *   so a mistyped meaning fails `bun run check` and the ASCII hyphens
+	 *   exist only in types.ts. Steps 11 and 13 pick it from the decision.
+	 * - `send` posts the transition with the credentials. The caller builds it,
+	 *   so the endpoint and any fields travel with the meaning they belong to.
+	 *
+	 * `requirements` — why a transition cannot go ahead (decision 90). Opened
+	 * only by `fail()`, for any body with `issues`, client or server. Not a
+	 * pre-flight state of the signature modal: its fixed text ("Electronic
+	 * Signature Required", "You are signing as") would be untrue above a list
+	 * of reasons you cannot sign, and A7.4 says the signature modal opens only
+	 * once the checks pass.
+	 *
+	 * ⚠️ KNOWN COST (flag 51): once the requirements dialog is dismissed,
+	 * nothing on the form marks a date that is PRESENT BUT TOO EARLY. An empty
+	 * mandatory field keeps its asterisk and its empty box; an early date looks
+	 * exactly like a valid one. Clicking Submit again is the only way back to
+	 * the reason. Rare — `min` stops the picker offering one — but reachable
+	 * by typing, or by a date saved before the boundary moved. Errors beside
+	 * the field (flag 35) are what would fix it.
+	 */
+	type Dialog =
+		| {
+				kind: 'sign';
+				meaning: SignatureMeaning;
+				send: (credentials: ESignatureCredentials) => Promise<ApiResult<ChangeControlResponse>>;
+		  }
+		| { kind: 'requirements'; error: string; issues: string[] };
+
+	let dialog = $state<Dialog | null>(null);
+	// ⚠️ A7.3: the password lives only here, only while the signature dialog
+	// is open. `closeDialog()` clears both fields on every way out, and
+	// neither is written anywhere else.
+	let esigEmail = $state('');
+	let esigPassword = $state('');
+	let esigError = $state<string | null>(null);
+	let signing = $state(false);
+
+	// Narrowed copies for the markup, so the template needs no discriminant
+	// checks of its own (an `{#each}` does not carry a template narrowing).
+	const signDialog = $derived(dialog?.kind === 'sign' ? dialog : null);
+	const requirementsDialog = $derived(dialog?.kind === 'requirements' ? dialog : null);
+
+	function openEsig(
+		meaning: SignatureMeaning,
+		send: (credentials: ESignatureCredentials) => Promise<ApiResult<ChangeControlResponse>>
+	) {
+		if (dialog !== null) return;
+		// A7.2: pre-filled with the signed-in user's email. Still editable —
+		// the server compares it, case-insensitively, against that user.
+		esigEmail = user.email;
+		esigPassword = '';
+		esigError = null;
+		dialog = { kind: 'sign', meaning, send };
+	}
+
+	function closeDialog() {
+		dialog = null;
+		esigEmail = '';
+		esigPassword = '';
+		esigError = null;
+	}
+
+	// Back, in either dialog. Ignored while a signature is in flight, so the
+	// outcome still has a dialog to land in.
+	function backFromDialog() {
+		if (signing) return;
+		closeDialog();
+	}
+
+	const INVALID_CREDENTIALS = 'Invalid credentials';
+
+	/**
+	 * Sign and Submit. Credential and transport failures stay in the modal,
+	 * where the user can act on them. Failures about the record close it and
+	 * go through `fail()`, which picks the home by shape.
+	 *
+	 *   200               setRecord, close, refetch signatures, notice
+	 *   401 Invalid cred. stay open, clear the password
+	 *   0 / 500           stay open, the message verbatim — a retry is safe:
+	 *                     if the first attempt committed, the retry gets a 409
+	 *   409               close, pinned error in the bar, reload (A8.2, decision 68)
+	 *   400 with issues   swap to the requirements dialog, credentials cleared
+	 *   400 · 403 · 404   close, error in the bar
+	 *
+	 * A 401 `Unauthorized` never lands here: `request()` refreshes and retries,
+	 * or ends the session, which unmounts this page (decision 13).
+	 */
+	async function sign() {
+		if (signDialog === null || signing) return;
+		esigError = null;
+
+		// The Go's own messages. Both checks run before its transaction opens,
+		// so a blank field would be a plain 400 even on a record that has
+		// moved on. ⚠️ The password is NEVER trimmed — the Go does not trim
+		// it, so trimming here would turn a correct password with a leading or
+		// trailing space into a 401 and a `SignatureFailed` row. (The
+		// prototype trims it.) The email is sent as typed: the server trims.
+		if (esigEmail.trim() === '') {
+			esigError = 'Email cannot be blank';
+			return;
+		}
+		if (esigPassword === '') {
+			esigError = 'Password cannot be blank';
+			return;
+		}
+		// Decision 74's second read. The `dialog` lock in `editable()` should
+		// make this unreachable; it stays as a one-line backstop.
+		if (dirty) {
+			closeDialog();
+			fail({ error: 'Save your changes before submitting.' });
+			return;
+		}
+
+		const { meaning, send } = signDialog;
+		signing = true;
+		const mine = latest;
+		const result = await send({ email: esigEmail, password: esigPassword });
+		signing = false;
+		if (mine !== latest) return;
+
+		if (result.ok) {
+			closeDialog();
+			// A7.7: the response IS the record, re-read inside the transaction.
+			// Set it; never refetch it.
+			setRecord(result.data);
+			actionError = null;
+			// The meaning verbatim, because it is what was attested to. The
+			// banner confirming the new state is usually scrolled off-screen
+			// when the user is at the bar.
+			actionNotice = `Signed: ${meaning} · ${formatDateTime(new Date().toISOString())}`;
+			// The history is not in the response. Guarded by the same `mine`,
+			// and keyed on the response's CC-ID, not the URL's.
+			loadSignatures(result.data.cc_id, mine);
+			return;
+		}
+		if (result.status === 401 && result.error.error === INVALID_CREDENTIALS) {
+			esigPassword = '';
+			esigError = 'Invalid credentials. Signature not applied and no changes were made.';
+			return;
+		}
+		if (result.status === 0 || result.status === 500) {
+			// No claim about data state: status 0 can hide a commit (trap 6).
+			esigError = result.error.error;
+			return;
+		}
+		// With `issues`, `fail()` opens the requirements dialog in place of
+		// this one; otherwise the error goes to the bar.
+		closeDialog();
+		fail(result.error, result.status === 409);
+		if (result.status === 409) load(ccId);
 	}
 </script>
 
@@ -1500,6 +1888,7 @@
 					id="proposed_implementation_date"
 					class="form-control"
 					disabled={!editable('proposed_implementation_date')}
+					min={minDate('proposed_implementation_date')}
 					oninput={recheckDateTimes}
 					onkeyup={recheckDateTimes}
 					bind:value={draftForm.proposed_implementation_date}
@@ -1515,6 +1904,7 @@
 					id="target_closure_date"
 					class="form-control"
 					disabled={!editable('target_closure_date')}
+					min={minDate('target_closure_date')}
 					oninput={recheckDateTimes}
 					onkeyup={recheckDateTimes}
 					bind:value={draftForm.target_closure_date}
@@ -2234,8 +2624,8 @@
 {/if}
 
 <!-- ================== Actions ================== -->
-<!-- Back to List, Save Draft and Submit Decision. T2's Submit and Cancel arrive
-     at steps 9 and 10; Submit for Final Approval at 8b. Every button is gated
+<!-- Back to List, Save Draft, the two submits and Submit Decision. Cancel
+     arrives at step 10. Every button is gated
      by the same predicates the controls are, so a role that can edit nothing
      here sees nothing but Back to List.
 
@@ -2248,22 +2638,34 @@
      Save Draft stays on the form (BRD US-CC-02). The prototype's
      `<a href="my-change-controls.html">` is a static mock, and saving is an
      action, so it is a `<button>`. `global.css` has no `.btn:disabled`, so
-     the label carries the in-flight state (decision 59). -->
+     the label carries the in-flight state (decision 59).
+
+     ⚠️ EVERY BUTTON LABEL IN THIS BAR USES NON-BREAKING SPACES (flag 39,
+     option B). `.actions-left` and `.actions-right` are flex rows, and a flex
+     item shrinks to its narrowest possible width: for a `.btn`, its longest
+     single word. So any text long enough to overflow the row squeezed the
+     buttons word by word ("Back / to / List"), even one plain sentence in a
+     half-screen window. `&nbsp;` makes the whole label that narrowest width,
+     so the message wraps instead. Chosen over `white-space: nowrap` in
+     global.css (canonical, five copies) and a per-button `style:`
+     (decision 71's one-cancellation precedent). A button added here without
+     it brings the defect back silently, and only at narrow widths — which
+     is the cost of this option. Labels in JS strings use ` `. -->
 <div class="form-actions">
 	<div class="actions-left">
 		<a href="/change-controls" class="btn secondary">
-			<i class="bi bi-arrow-left"></i> Back to List
+			<i class="bi bi-arrow-left"></i> Back&nbsp;to&nbsp;List
 		</a>
 	</div>
 
 	<div class="actions-right">
-		{#if actionError}
-			<!-- A save's `issues` can only list unknown keys, which the body
-			     cannot contain. They are rendered anyway, raw, as A8.1 asks. -->
+		{#if shownError}
+			<!-- `shownError`, not `actionError`: an error hides once the screen
+			     no longer matches the one it was about (decision 89, flag 50).
+			     One plain sentence only, by construction: `fail()` sends every
+			     body with `issues` to the requirements dialog (decision 90). -->
 			<!-- The class carries a modal-stacking margin that a flex row centres against, lifting the box half of --spacing-lg above the button. -->
-			<div class="esig-error show" style:margin-bottom="0">
-				{actionError.error}{#if 'issues' in actionError}: {actionError.issues.join(', ')}{/if}
-			</div>
+			<div class="esig-error show" style:margin-bottom="0">{shownError.error}</div>
 		{:else if dirty}
 			<!-- Outranks "Saved …" without clearing it (decision 75). Undo back
 			     to the saved values and that message returns, still true. -->
@@ -2276,14 +2678,21 @@
 		{#if canSaveDraft() || canSaveImplementation()}
 			<button type="button" class="btn secondary" onclick={save} disabled={saving}>
 				<i class="bi bi-save"></i>
-				{saving ? 'Saving…' : 'Save Draft'}
+				{saving ? 'Saving…' : 'Save Draft'}
+			</button>
+		{/if}
+		<!-- T2, owner only. Same predicate as the save, because the API checks
+		     the same two things. The prototype's label and icon. -->
+		{#if canSaveDraft()}
+			<button type="button" class="btn primary" onclick={submitForImplApproval}>
+				<i class="bi bi-send"></i> Submit&nbsp;for&nbsp;Approval
 			</button>
 		{/if}
 		<!-- T6, owner only. Same predicate as the save, because the API checks
 		     the same two things. -->
 		{#if canSaveImplementation()}
 			<button type="button" class="btn primary" onclick={submitForFinalApproval}>
-				<i class="bi bi-send"></i> Submit for Final Approval
+				<i class="bi bi-send"></i> Submit&nbsp;for&nbsp;Final&nbsp;Approval
 			</button>
 		{/if}
 		<!-- Submit Decision, for the ASSIGNED approver only — the API authorises
@@ -2295,12 +2704,139 @@
 		     (decision 74). The handlers refuse out loud instead. -->
 		{#if cc && isAssignedApprover() && cc.current_state === 'Pending Implementation Approval'}
 			<button type="button" class="btn primary" onclick={submitImplDecision}>
-				<i class="bi bi-check-circle"></i> Submit Decision
+				<i class="bi bi-check-circle"></i> Submit&nbsp;Decision
 			</button>
 		{:else if cc && isAssignedApprover() && cc.current_state === 'Pending Final Approval'}
 			<button type="button" class="btn primary" onclick={submitFinalDecision}>
-				<i class="bi bi-check-circle"></i> Submit Decision
+				<i class="bi bi-check-circle"></i> Submit&nbsp;Decision
 			</button>
 		{/if}
 	</div>
 </div>
+
+<!-- ================== E-Signature Modal ================== -->
+<!-- One modal for every signed transition (decision 88), opened by
+     `openEsig(meaning, send)`. Markup from owner/cc-form-initated-state.html.
+     Inline rather than a component: this is the first copy, and B5 says
+     `EsigModal` has to earn extraction.
+
+     `.modal` is `display: none` until `.open`, so it renders only while open,
+     always with both classes. Departures from the prototype:
+     - "Email", not "Username", with an `id` the label points at (A7.1).
+     - The error shows the actual outcome, not a fixed sentence.
+     - `button` elements carry `type` and in-flight labels (decision 59).
+     While it is open, `editable()` locks every control behind it.
+
+     ⚠️ No Escape-to-close and no focus management (flag 52): no prototype has
+     either, so adding them is invention. Deliberately not inherited silently. -->
+{#if signDialog}
+	<div class="modal open">
+		<div class="modal-content">
+			<h3><i class="bi bi-pen"></i> Electronic Signature Required</h3>
+			<p class="modal-subtitle">
+				Enter your credentials to sign this action. Your signature will be permanently recorded
+				and cannot be removed.
+			</p>
+
+			<div class="esig-meaning">
+				<div class="esig-meaning-label">You are signing as</div>
+				<div class="esig-meaning-value">{signDialog.meaning}</div>
+			</div>
+
+			{#if esigError}
+				<div class="esig-error show">
+					<i class="bi bi-exclamation-triangle"></i>
+					{esigError}
+				</div>
+			{/if}
+
+			<div class="form-group">
+				<label for="esig-email">Email *</label>
+				<input
+					type="text"
+					class="form-control"
+					id="esig-email"
+					placeholder="Enter your email"
+					autocomplete="off"
+					disabled={signing}
+					bind:value={esigEmail}
+				/>
+			</div>
+
+			<div class="form-group">
+				<label for="esig-password">Password *</label>
+				<input
+					type="password"
+					class="form-control"
+					id="esig-password"
+					placeholder="Enter your password"
+					autocomplete="off"
+					disabled={signing}
+					bind:value={esigPassword}
+				/>
+			</div>
+
+			<div class="field-hint">
+				You may only sign as yourself. Signing on behalf of another user is prohibited.
+			</div>
+
+			<div class="modal-actions">
+				<button type="button" class="btn secondary" onclick={backFromDialog}>
+					<i class="bi bi-arrow-left"></i> Back
+				</button>
+				<button type="button" class="btn primary" onclick={sign} disabled={signing}>
+					<i class="bi bi-pen"></i>
+					{signing ? 'Signing…' : 'Sign and Submit'}
+				</button>
+			</div>
+		</div>
+	</div>
+{/if}
+
+<!-- ================== Requirements Dialog ================== -->
+<!-- Why a transition cannot go ahead (decision 90). Opened only by `fail()`,
+     for a body with `issues`: `submitGate()`'s refusal, or a server 400. The
+     same dialog for both, so they render identically (A8.1). A list of things
+     to go and fix is not a status line: check 1 at step 9 showed twenty
+     labels in the sticky bar squeezing its buttons onto three lines.
+
+     ⚠️ NO PROTOTYPE DRAWS THIS. What is invented, and what is not:
+     - Invented: using `.modal` for something other than a signature; its
+       structure (heading, list, one button); and the `<ul>`, left to the
+       browser's default styling — the one new visual. It sits inside
+       `.esig-error`, whose margin was designed for exactly this modal
+       context, so no CSS is added and flag 39's flex-row fight does not
+       apply here.
+     - Not invented: the heading is `error` verbatim — the Go's "Cannot
+       submit: some requirements are not met", or the client's identical
+       copy. Every item is verbatim: bare labels stay bare, and nothing
+       rewrites them. The Back button and the triangle icon are the
+       prototype's own.
+     - Deliberately absent: a subtitle such as "Save your changes, then
+       submit again". It would be UNTRUE at the approver gates, where there is
+       nothing to save. Writing no copy of our own is how the incomplete-vs-
+       untrue test is met here.
+
+     Dismissing it leaves nothing in the bar. The asterisks and the date
+     inputs' `min` stay as cues, and Submit reopens the list. That leaves no
+     cue for a present-but-early date (flag 51). No Escape, no focus
+     management (flag 52). -->
+{#if requirementsDialog}
+	<div class="modal open">
+		<div class="modal-content">
+			<h3><i class="bi bi-exclamation-triangle"></i> {requirementsDialog.error}</h3>
+			<div class="esig-error show">
+				<ul>
+					{#each requirementsDialog.issues as issue}
+						<li>{issue}</li>
+					{/each}
+				</ul>
+			</div>
+			<div class="modal-actions">
+				<button type="button" class="btn secondary" onclick={backFromDialog}>
+					<i class="bi bi-arrow-left"></i> Back
+				</button>
+			</div>
+		</div>
+	</div>
+{/if}

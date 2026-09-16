@@ -106,7 +106,15 @@ fail on the **first** problem with a plain `ErrorResponse`. By design: they
 validate a small request body the user just typed. Only `HandlerSubmitForImplApproval`
 and `HandlerSubmitForFinalApproval` declare an issues array.
 
-**Render every item** when there is one.
+**Render every item** when there is one — ⚠️ **in a dialog, never the sticky
+bar.** On the CC form, `fail()` routes by **shape**:
+- **A body with `issues` goes to the requirements dialog:** `error` as the heading,
+  then every item verbatim in a `<ul>`.
+- **A plain `{ error }` goes to the bar.**
+
+The rule is shape, never length. Twenty labels joined on one line squeezed the
+bar's buttons onto three lines (step 9). The client's submit gate returns the same
+shape as the server, so both open the same dialog.
 
 `PUT /users/{id}` and `.../active` can return `blocked_cc_ids` on a 409, and the
 request is **all-or-nothing** — do not tell the user the name was saved.
@@ -177,8 +185,36 @@ those checks run **before the transaction opens** — so they precede the 404, t
 403 and the 409. A blank `decision_comments` on a record that has already moved
 on returns the 400, not the 409.
 
+⚠️ **T2 and T6 have body checks too, and they run first:** blank email, blank
+password, a bad body, a blank CC-ID. Each is a **plain `ErrorResponse`** 400, so
+a T2/T6 400 does not always carry `issues`. The modal refuses both blanks
+before sending.
+
 **The signature is checked last** in all five (A7.4), so the modal should only
-open once the client-side checks pass.
+open once the client-side checks pass. ⚠️ **For T2 those checks include the
+business-day rules**, which the server checks in the same pass as presence:
+- **UTC dates only**, with the boundary computed at click time.
+- The string comparison `value < boundary`.
+- The Go's own sentences, word for word.
+
+`min` on the date inputs is an affordance, never the gate (blueprint A5.3).
+
+⚠️ **Never trim the password.** The Go trims the email and not the password.
+The prototypes trim both.
+
+**The modal's outcomes** (one modal, `openEsig(meaning, send)`):
+
+| Result | Do |
+|---|---|
+| 200 | `setRecord(response)`, close, set the notice, refetch **signatures only** |
+| 401 `Invalid credentials` | stay open, clear the password |
+| 0 / 500 | stay open, the message verbatim; a retry is safe (a committed first attempt gets 409) |
+| 409 | close, pinned error in the bar, reload |
+| 400 with `issues` | swap to the requirements dialog, credentials cleared |
+| 400 / 403 / 404 | close, error in the bar |
+
+⚠️ **The signatures refetch takes its own `mine` check after its own `await`.**
+The 200's check does not cover a second request.
 
 **A failed signature** is 401 `Invalid credentials` — the exact string
 `request()` must not retry (see Auth below). It writes a `SignatureFailed` audit
