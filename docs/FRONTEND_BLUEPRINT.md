@@ -619,6 +619,16 @@ Never store the password; clear it when the modal closes.
 so a trimmed password with a leading or trailing space draws a false 401 and an
 audit row. The prototypes trim both.
 
+**The rule is per field, not "never trim" (step 10).** A client-side check
+applies what the server applies to that field before its own check, and **every
+value is sent as typed**. So the password is checked `=== ''`. The email and
+T3's `cancellation_reason` are checked after `trim()`, because the Go runs
+`TrimSpace` on both, and the reason's 500-rune limit is counted after the trim.
+JavaScript's `trim()` and Go's `TrimSpace` disagree on U+0085 and U+FEFF. For a
+check, both directions are safe: the client refuses a reason that is only
+U+FEFF, which the server would have stored, and anything the server refuses
+instead comes back as a plain 400 that stays in the modal (A7.8).
+
 Two mechanics behind the row, both deliberate:
 - It is written with `cfg.db`, **not** the transaction, so it survives the
   `defer tx.Rollback()` that undoes everything else.
@@ -705,6 +715,27 @@ refetches `GET …/signatures` alone. The rule above covers the record, not this
 separate resource (step 9). ⚠️ That GET is a second `await` after the 200 is
 checked, so it needs **its own** sequence check. Otherwise a navigation in between
 lands the old record's signatures on the new record's panel.
+
+### A7.8 T3 collects its reason inside the signature modal (step 10)
+
+T3 is the one transition whose body carries a value **typed in the modal**:
+`cancellation_reason`, beside the credentials. It is not a separate modal. The
+signature modal asks for the reason when the meaning being signed is
+`Cancelled`, which only T3 signs. **No presence gate:** the handler checks no
+stored field, so a draft may be cancelled at any completeness. **It does refuse
+while the form is dirty,** like every other bar button. T3 ignores field values,
+so the record frozen for good is the stored one. In a regulated system, the
+permanent record and the screen that authorised it should agree.
+
+**Where an error goes: wherever the user can act on it.**
+- Failures about the record (409, 403, 404, `issues`) close the modal.
+- **A plain 400 is always a body check made before the transaction opens**, so
+  it is about something the user typed. For T2 and T3 every body value is typed
+  in the modal, so a plain 400 stays in the modal, nothing cleared.
+- A 401 `Invalid credentials` clears **only** the password. The email and the
+  reason are kept.
+- ⚠️ T4/T5 and T7/T8 carry fields from the form behind the modal, so a plain 400
+  there can name a field the modal cannot fix. Step 11 decides that row.
 
 ## A8. Errors
 
@@ -1478,8 +1509,9 @@ change_title: form.change_title === '' ? null : form.change_title
 `'' → null` turns an emptied box back into a clear instruction, which matches A3.
 **Date and time fields, and `assigned_approver_id`, must send `null`**, since `""`
 is a parse error there (A3, A5.1). On text and enum fields the API normalises `""`
-to `null` anyway. **Do not trim on the client.** The server trims, and Go's
-`TrimSpace` and JavaScript's `trim()` disagree on U+0085 and U+FEFF.
+to `null` anyway. **Do not trim a value you send.** The server trims, and Go's
+`TrimSpace` and JavaScript's `trim()` disagree on U+0085 and U+FEFF. (A
+client-side *check* may trim where the server does. See A7.3.)
 
 **Keep the record and the form as two objects.** `cc` holds what the server last
 sent, and `form` holds what is on screen. Only a fetch or a save response
@@ -1635,7 +1667,7 @@ end to end, and do not merge two because they feel contiguous.
 | **8a** | **The permissions restructure**: `editable()` switches on state, the approver's two gate slices become editable for the **assigned** approver only, every other role and state is locked, and flag 25's section notes, placeholders and the four remaining info-banners land. Widened at step 8 — it was "the `Initiated` role views" | The Security Matrix as `{#if}` and `disabled`, **authorisation by identity rather than role** (A7.6), and the Viewer's read-only view. The gate buttons run their client-side checks and stop where the modal will open |
 | **8b** | **The `In Implementation` slice and its save** — `PUT /{ccID}/implementation`, Save Draft in that state, and Submit for Final Approval's gate. Absorbed from step 12 | The second save endpoint, and dirty tracking over a second form object. See below |
 | 9 | **T2 submit + the e-signature modal** — written once, inline, and opened with a meaning and a sender, so steps 11 and 13 reuse it. Also: the date rules in the submit gate, a requirements dialog for every `issues` body, and the bar's error ordering (flag 42) | The first transition end to end, the save-then-submit gate, and the modal's three outcome paths: a rejected signature, a transport failure, and a failure about the record |
-| 10 | **T3 cancel** | The one modal that collects **a reason *and* credentials together** — unlike every other transition |
+| 10 | **T3 cancel** — the step-9 signature modal, which asks for the reason when the meaning is `Cancelled`. Amended at step 10: not a third modal | The one transition that collects **a reason *and* credentials together**, and where a body error belongs when the field is inside the modal (A7.8) |
 | 11 | **Approver flow** — the queue, and the implementation decision (T4/T5) | The second role, and the first approval gate |
 | 12 | **File upload** — the evidence control. Narrowed at step 8: the save half moved to 8b | `FormData`, the part named `file`, and the PDF/size limits |
 | 13 | **T6 + the final decision (T7/T8)**. The signature history panel moved to 7a | The remaining gates, and the full state machine exercised |

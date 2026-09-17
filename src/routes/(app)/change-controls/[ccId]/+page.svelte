@@ -3,7 +3,8 @@
 	Step 7b binds the owner's 24 draft fields, and 7c saves them. Save Draft
 	sends only the fields that differ from the record. 7d shows, continuously,
 	whether any do: the gate step 9's Submit depends on. Step 9 adds T2 and
-	the one e-signature modal every signed transition opens.
+	the one e-signature modal every signed transition opens. Step 10 adds T3,
+	which opens that same modal with a reason field in it.
 
 	Markup from docs/prototypes/owner/cc-form-closed.html, the one prototype
 	with every section populated. The other cc-form-* prototypes differ in which
@@ -55,6 +56,7 @@
 		REQUIRES_TRAINING,
 		RISK_LEVELS,
 		type ApproverRef,
+		type CancelRequest,
 		type ChangeControlResponse,
 		type ListApproversResponse,
 		type DecisionRequest,
@@ -801,9 +803,11 @@
 	 * ⚠️ They are NOT all 2000. `change_title` is 200 and
 	 * `affected_systems_modules` is 500 — both `<input type="text">`, both easy
 	 * to assume otherwise. Enums, dates and the approver id carry no limit.
-	 * `cancellation_reason` is 500 and belongs to T3's modal, at step 10.
 	 *
 	 * Fields absent from here have no server limit and get no counter.
+	 * `cancellation_reason` is not here: it is not an `EditableField` (the
+	 * Security Matrix marks it R everywhere), because T3's modal collects it.
+	 * Its limit is `CANCELLATION_REASON_LIMIT` below.
 	 */
 	const LIMITS: Partial<Record<EditableField, number>> = {
 		change_title: 200,
@@ -850,11 +854,25 @@
 	function lengthHint(field: EditableField, value: string): string | null {
 		const limit = LIMITS[field];
 		if (limit === undefined || !mayEdit(field)) return null;
+		return countHint(value, limit);
+	}
+
+	/**
+	 * The counter's wording, apart from any field. Split out of `lengthHint`
+	 * at step 10 so T3's reason, which is not an `EditableField`, reads the
+	 * same as the other eighteen. Counts as typed, like them. The server
+	 * counts after trimming, so a reason padded with spaces can read "over"
+	 * and still be accepted. That errs strict.
+	 */
+	function countHint(value: string, limit: number): string | null {
 		const used = [...value].length;
 		if (used <= limit * 0.8) return null;
 		if (used > limit) return `${used} / ${limit} — ${used - limit} over the limit`;
 		return `${used} / ${limit}`;
 	}
+
+	// `HandlerCancelChangeControl`: `len([]rune(reason)) > 500`, after TrimSpace.
+	const CANCELLATION_REASON_LIMIT = 500;
 
 	// ── Save Draft ──────────────────────────────────────────────────────────
 
@@ -971,12 +989,13 @@
 	 * `null` when none does. Always a FRESH read (decision 73), so every caller
 	 * gets the backstop flag 41 describes.
 	 *
-	 * One definition, three callers — both saves ("saving") and `submitGate()`
-	 * ("submitting"). Extracted at 8b rather than written a third time: the
-	 * three-copies rule governs markup, not functions (decision 46), so the
-	 * test was whether one definition beats three, and a sentence that must
-	 * read the same under three different buttons is exactly that case. The
-	 * verb stays a parameter so the message still names the action it refused.
+	 * One definition, three callers — both saves ("saving") and
+	 * `unsavedRefusal()` ("submitting", or "cancelling" since step 10).
+	 * Extracted at 8b rather than written a third time: the three-copies rule
+	 * governs markup, not functions (decision 46), so the test was whether one
+	 * definition beats three, and a sentence that must read the same under
+	 * three different buttons is exactly that case. The verb stays a parameter
+	 * so the message still names the action it refused.
 	 */
 	function incompleteMessage(verb: string): string | null {
 		const fields = incompleteDateTimes();
@@ -1310,6 +1329,39 @@
 	const SIGNATURE_NOT_BUILT: ErrorBody = { error: 'Electronic signature is not built yet.' };
 
 	/**
+	 * The refusal for any signed transition while the screen is not the stored
+	 * record: a save in flight, unsaved edits, or a partial date. `null` when
+	 * the screen and the record agree.
+	 *
+	 * ⚠️ T2, T3 and T6 all ignore field values. The record they act on is the
+	 * STORED one, so signing while the screen shows something else means the
+	 * signature authorises a record the signer was not looking at. For T2 and
+	 * T6 that record is validated; for T3 it is frozen for good. Cancel refuses
+	 * too, although its edits would be discarded anyway (Lain's ruling at step
+	 * 10): every bar button refuses while dirty, and letting Cancel through
+	 * would need a hole in `sign()`'s backstop.
+	 *
+	 * One definition for three callers (decision 86's precedent): both gates
+	 * and `sign()`'s backstop. The verb names the action refused.
+	 *
+	 * ⚠️ THE THIRD CHECK IS A BACKSTOP, NOT A LIVE BRANCH. `dirty` already
+	 * includes `incomplete`, and it is checked first, so a partial date draws
+	 * "Save your changes before …", never the date message (Lain, step 10).
+	 * The date message fires only when `incomplete` is stale: when the DOM
+	 * holds a partial entry that neither `input` nor `keyup` reported. Chrome
+	 * reports both (7d checks 3 and 5), so there it is unreachable from every
+	 * caller. It stays for flag 41 — another browser's picker — which is why
+	 * `incompleteMessage()` reads the DOM fresh rather than trusting the copy.
+	 * Do not delete it as dead code; do not expect to see it in a check.
+	 */
+	function unsavedRefusal(verb: string): ErrorBody | null {
+		if (saving) return { error: 'A save is in progress. Try again in a moment.' };
+		if (dirty) return { error: `Save your changes before ${verb}.` };
+		const refusal = incompleteMessage(verb);
+		return refusal === null ? null : { error: refusal };
+	}
+
+	/**
 	 * The client-side half of a signed transition (A7.4).
 	 *
 	 * The API validates presence and business rules BEFORE it checks the
@@ -1317,7 +1369,7 @@
 	 * sign something the server is about to reject. This runs those checks
 	 * first, and returns a message when the transition must not be offered.
 	 *
-	 * ⚠️ `incompleteMessage()` reads the DOM FRESH, not through `incomplete`
+	 * ⚠️ `unsavedRefusal()` reads partial dates FRESH, not through `incomplete`
 	 * (decision 73). The reactive copy is refreshed by two events, and flag 41
 	 * records that another browser's date picker could produce a partial entry
 	 * without either one.
@@ -1338,11 +1390,8 @@
 		// inside the filter callback.
 		if (cc === null) return { error: 'The record is still loading.' };
 		const record = cc;
-		if (saving) return { error: 'A save is in progress. Try again in a moment.' };
-		if (dirty) return { error: 'Save your changes before submitting.' };
-
-		const refusal = incompleteMessage('submitting');
-		if (refusal !== null) return { error: refusal };
+		const unsaved = unsavedRefusal('submitting');
+		if (unsaved !== null) return unsaved;
 
 		// ⚠️ `implementation_evidence` is in MANDATORY and in EditableField, but
 		// it is in no form object — it has no control and no value, only an
@@ -1458,6 +1507,36 @@
 		);
 	}
 
+	/**
+	 * T3, the owner's cancel out of `Initiated`. No presence gate: a draft may
+	 * be abandoned at any completeness (the Go checks none). Only the unsaved
+	 * refusal, then the signature modal.
+	 *
+	 * The reason is typed INSIDE the modal, so it cannot be snapshotted at open
+	 * time the way steps 11 and 13 snapshot their buffers. `send` reads
+	 * `esigReason` when `sign()` calls it instead. That is the same guarantee:
+	 * `sign()` has just checked the reason and set `signing`, which disables
+	 * the textarea, and the body is built before `request()`'s first `await`.
+	 * So what is sent is what was on screen at the click.
+	 *
+	 * No `goto`: success stays on the page, now Cancelled and read-only.
+	 */
+	function cancelChangeControl() {
+		if (cc === null || draftForm === null || dialog !== null) return;
+		actionError = null;
+		actionNotice = null;
+		const refusal = unsavedRefusal('cancelling');
+		if (refusal !== null) {
+			fail(refusal);
+			return;
+		}
+		const path = `/changecontrols/${encodeURIComponent(cc.cc_id)}/cancel`;
+		openEsig('Cancelled', (credentials) => {
+			const body: CancelRequest = { ...credentials, cancellation_reason: esigReason };
+			return request<ChangeControlResponse>('POST', path, body);
+		});
+	}
+
 	// ── The dialogs ─────────────────────────────────────────────────────────
 
 	/**
@@ -1473,6 +1552,11 @@
 	 *   exist only in types.ts. Steps 11 and 13 pick it from the decision.
 	 * - `send` posts the transition with the credentials. The caller builds it,
 	 *   so the endpoint and any fields travel with the meaning they belong to.
+	 * - T3 is this modal too, not a kind of its own (step 10, flag 49). When the
+	 *   meaning is `Cancelled` it also asks for the reason. The meaning is the
+	 *   key because it already IS the transition (one constant per transition,
+	 *   and only T3 signs `Cancelled`). A `cancel` kind or a flag would encode
+	 *   the same fact a second time, and the two could disagree.
 	 *
 	 * `requirements` — why a transition cannot go ahead (decision 90). Opened
 	 * only by `fail()`, for any body with `issues`, client or server. Not a
@@ -1499,10 +1583,11 @@
 
 	let dialog = $state<Dialog | null>(null);
 	// ⚠️ A7.3: the password lives only here, only while the signature dialog
-	// is open. `closeDialog()` clears both fields on every way out, and
-	// neither is written anywhere else.
+	// is open. `closeDialog()` clears all three fields on every way out, and
+	// none is written anywhere else. `esigReason` is T3's cancellation reason.
 	let esigEmail = $state('');
 	let esigPassword = $state('');
+	let esigReason = $state('');
 	let esigError = $state<string | null>(null);
 	let signing = $state(false);
 
@@ -1510,6 +1595,8 @@
 	// checks of its own (an `{#each}` does not carry a template narrowing).
 	const signDialog = $derived(dialog?.kind === 'sign' ? dialog : null);
 	const requirementsDialog = $derived(dialog?.kind === 'requirements' ? dialog : null);
+	// Whether the open signature modal is T3's, which asks for the reason.
+	const cancelling = $derived(signDialog?.meaning === 'Cancelled');
 
 	function openEsig(
 		meaning: SignatureMeaning,
@@ -1520,6 +1607,7 @@
 		// the server compares it, case-insensitively, against that user.
 		esigEmail = user.email;
 		esigPassword = '';
+		esigReason = '';
 		esigError = null;
 		dialog = { kind: 'sign', meaning, send };
 	}
@@ -1528,6 +1616,7 @@
 		dialog = null;
 		esigEmail = '';
 		esigPassword = '';
+		esigReason = '';
 		esigError = null;
 	}
 
@@ -1546,12 +1635,26 @@
 	 * go through `fail()`, which picks the home by shape.
 	 *
 	 *   200               setRecord, close, refetch signatures, notice
-	 *   401 Invalid cred. stay open, clear the password
-	 *   0 / 500           stay open, the message verbatim — a retry is safe:
-	 *                     if the first attempt committed, the retry gets a 409
+	 *   401 Invalid cred. stay open, clear the password ONLY — the email and
+	 *                     T3's reason are kept: a wrong password says nothing
+	 *                     about them, and the reason is costly to retype
+	 *   0 / 500           stay open, the message verbatim, nothing cleared — a
+	 *                     retry is safe: if the first attempt committed, the
+	 *                     retry gets a 409
+	 *   400 plain         stay open, the message verbatim, nothing cleared
 	 *   409               close, pinned error in the bar, reload (A8.2, decision 68)
 	 *   400 with issues   swap to the requirements dialog, credentials cleared
-	 *   400 · 403 · 404   close, error in the bar
+	 *   403 · 404         close, error in the bar
+	 *
+	 * THE RULE BEHIND THE TABLE: an error goes where the user can act on it.
+	 * Failures about the record (409, 403, 404, `issues`) close the modal.
+	 * A plain 400 is always a body check made before the transaction opens,
+	 * so it is about something the user typed. For T2 and T3 everything in
+	 * the body is typed IN this modal — credentials, and T3's reason — so it
+	 * stays here with the value to fix (step 10, flag 53). ⚠️ That holds only
+	 * while every caller's body is typed in the modal. T4/T5 and T7/T8 carry
+	 * fields from the form behind it ("Decision Comments cannot be blank"),
+	 * which belong to the bar: step 11 revisits this row.
 	 *
 	 * A 401 `Unauthorized` never lands here: `request()` refreshes and retries,
 	 * or ends the session, which unmounts this page (decision 13).
@@ -1560,12 +1663,26 @@
 		if (signDialog === null || signing) return;
 		esigError = null;
 
-		// The Go's own messages. Both checks run before its transaction opens,
-		// so a blank field would be a plain 400 even on a record that has
-		// moved on. ⚠️ The password is NEVER trimmed — the Go does not trim
-		// it, so trimming here would turn a correct password with a leading or
-		// trailing space into a 401 and a `SignatureFailed` row. (The
-		// prototype trims it.) The email is sent as typed: the server trims.
+		// The Go's own messages, in the Go's order. All of them run before its
+		// transaction opens, so each would be a plain 400 even on a record that
+		// has moved on.
+		//
+		// Each check applies what the server applies to that field before ITS
+		// check, and every value is sent as typed (step 10, flag 53):
+		// - ⚠️ The password is NEVER trimmed — the Go does not trim it, so
+		//   trimming here would turn a correct password with a leading or
+		//   trailing space into a 401 and a `SignatureFailed` row. (The
+		//   prototypes trim it.)
+		// - The email and T3's reason are trimmed for the check only. The Go
+		//   trims both, and counts the reason's runes after trimming.
+		// JavaScript's trim and Go's disagree on U+0085 and U+FEFF. Both
+		// directions are safe: the client refuses a reason that is only U+FEFF,
+		// and anything the server refuses instead comes back as a plain 400,
+		// which stays in this modal.
+		if (cancelling && esigReason.trim() === '') {
+			esigError = 'Cancellation Reason cannot be blank';
+			return;
+		}
 		if (esigEmail.trim() === '') {
 			esigError = 'Email cannot be blank';
 			return;
@@ -1574,11 +1691,18 @@
 			esigError = 'Password cannot be blank';
 			return;
 		}
+		if (cancelling && [...esigReason.trim()].length > CANCELLATION_REASON_LIMIT) {
+			esigError = `Cancellation Reason must be ${CANCELLATION_REASON_LIMIT} characters or fewer`;
+			return;
+		}
 		// Decision 74's second read. The `dialog` lock in `editable()` should
-		// make this unreachable; it stays as a one-line backstop.
-		if (dirty) {
+		// make this unreachable; it stays as a backstop, for T3 as much as for
+		// T2 — the signature must not authorise a record other than the one on
+		// screen.
+		const unsaved = unsavedRefusal(cancelling ? 'cancelling' : 'submitting');
+		if (unsaved !== null) {
 			closeDialog();
-			fail({ error: 'Save your changes before submitting.' });
+			fail(unsaved);
 			return;
 		}
 
@@ -1611,6 +1735,11 @@
 		}
 		if (result.status === 0 || result.status === 500) {
 			// No claim about data state: status 0 can hide a commit (trap 6).
+			esigError = result.error.error;
+			return;
+		}
+		if (result.status === 400 && !('issues' in result.error)) {
+			// A value typed in this modal. See the rule above the table.
 			esigError = result.error.error;
 			return;
 		}
@@ -2624,8 +2753,8 @@
 {/if}
 
 <!-- ================== Actions ================== -->
-<!-- Back to List, Save Draft, the two submits and Submit Decision. Cancel
-     arrives at step 10. Every button is gated
+<!-- Back to List, Cancel CC, Save Draft, the two submits and Submit
+     Decision. Every button is gated
      by the same predicates the controls are, so a role that can edit nothing
      here sees nothing but Back to List.
 
@@ -2656,6 +2785,15 @@
 		<a href="/change-controls" class="btn secondary">
 			<i class="bi bi-arrow-left"></i> Back&nbsp;to&nbsp;List
 		</a>
+		<!-- T3, owner only, in Initiated. Same predicate as Save Draft and
+		     Submit for Approval, because the API checks the same two things.
+		     The prototype's placement, class, icon and label. Refuses while
+		     dirty, like every other bar button (step 10, Lain's ruling). -->
+		{#if canSaveDraft()}
+			<button type="button" class="btn danger" onclick={cancelChangeControl}>
+				<i class="bi bi-x-circle"></i> Cancel&nbsp;CC
+			</button>
+		{/if}
 	</div>
 
 	<div class="actions-right">
@@ -2727,16 +2865,48 @@
      - `button` elements carry `type` and in-flight labels (decision 59).
      While it is open, `editable()` locks every control behind it.
 
+     T3 IS THIS MODAL (step 10, flag 49). When `cancelling`, three spots take
+     the cancellation modal's markup from the same prototype: the heading and
+     subtitle, the reason field, and the red confirm button. Everything else
+     is shared, so the credentials markup exists once. Departures: the
+     subtitle names the real CC-ID (the prototype hardcodes CC-001), and the
+     reason has no `maxlength` (flag 36) but a counter instead.
+
      ⚠️ No Escape-to-close and no focus management (flag 52): no prototype has
      either, so adding them is invention. Deliberately not inherited silently. -->
-{#if signDialog}
+{#if signDialog && cc}
 	<div class="modal open">
 		<div class="modal-content">
-			<h3><i class="bi bi-pen"></i> Electronic Signature Required</h3>
-			<p class="modal-subtitle">
-				Enter your credentials to sign this action. Your signature will be permanently recorded
-				and cannot be removed.
-			</p>
+			{#if cancelling}
+				<h3>Cancel Change Control</h3>
+				<p class="modal-subtitle">
+					Are you sure you want to cancel {cc.cc_id}? This action cannot be undone.
+				</p>
+
+				<div class="form-group">
+					<label for="esig-reason">Cancellation Reason *</label>
+					<textarea
+						class="form-control"
+						id="esig-reason"
+						rows="4"
+						placeholder="Enter reason for cancellation (required)"
+						disabled={signing}
+						bind:value={esigReason}
+					></textarea>
+					<!-- The prototype's static hint until 80% of the limit, then the
+					     same counter as every other limited field. -->
+					<div class="field-hint">
+						{countHint(esigReason, CANCELLATION_REASON_LIMIT) ??
+							`Maximum ${CANCELLATION_REASON_LIMIT} characters`}
+					</div>
+				</div>
+			{:else}
+				<h3><i class="bi bi-pen"></i> Electronic Signature Required</h3>
+				<p class="modal-subtitle">
+					Enter your credentials to sign this action. Your signature will be permanently recorded
+					and cannot be removed.
+				</p>
+			{/if}
 
 			<div class="esig-meaning">
 				<div class="esig-meaning-label">You are signing as</div>
@@ -2784,10 +2954,17 @@
 				<button type="button" class="btn secondary" onclick={backFromDialog}>
 					<i class="bi bi-arrow-left"></i> Back
 				</button>
-				<button type="button" class="btn primary" onclick={sign} disabled={signing}>
-					<i class="bi bi-pen"></i>
-					{signing ? 'Signing…' : 'Sign and Submit'}
-				</button>
+				{#if cancelling}
+					<button type="button" class="btn danger" onclick={sign} disabled={signing}>
+						<i class="bi bi-x-circle"></i>
+						{signing ? 'Signing…' : 'Sign and Cancel CC'}
+					</button>
+				{:else}
+					<button type="button" class="btn primary" onclick={sign} disabled={signing}>
+						<i class="bi bi-pen"></i>
+						{signing ? 'Signing…' : 'Sign and Submit'}
+					</button>
+				{/if}
 			</div>
 		</div>
 	</div>

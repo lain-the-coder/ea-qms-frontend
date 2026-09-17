@@ -14,8 +14,16 @@ prototypes, not a redesign.
 2. **Explain what you wrote and why**, especially where a blueprint rule or an API
    constraint drove a choice. Lain must be able to explain every line to a third
    party; if the reasoning is not obvious from the code, say it.
-3. **Ask before any shell command.** No exceptions.
-4. **Never run git commands.** Propose a commit message; Lain runs git.
+3. **Shell commands: read-only inspection you may run; anything that changes
+   state you may not without asking.** Reading files, `grep`, `ls`,
+   `git status`, `git diff`, `git log` and psql `SELECT`s need no approval. Ask
+   before anything that changes state: installing, running the app, stopping or
+   starting services, or any psql write. **Also ask before `bun run check` and
+   `bun run build`** — not because of what they write, but because they take
+   long enough that Lain wants to know when they run.
+4. **Never run a git command that writes to the repo or the index** — `add`,
+   `commit`, `push`, `checkout`, `reset`, `stash`, `rebase`, `merge`, and the
+   like. Propose a commit message; Lain runs git.
 5. **Stop and ask** when documents disagree or something is ambiguous. Never
    assume, never go beyond documented scope. **Flag rather than invent.**
 6. **After each step, tell Lain exactly what to verify** — what to click in the

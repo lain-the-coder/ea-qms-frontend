@@ -851,7 +851,10 @@ components:
             cancellation_reason:
               type: string
               maxLength: 500
-              description: Mandatory, not whitespace-only. Permanently read-only once saved.
+              description: |
+                Mandatory, not whitespace-only. The limit is 500 runes **after
+                trimming**, so a longer value padded with whitespace is accepted.
+                Stored trimmed. Permanently read-only once saved.
 
     DecisionRequest:
       allOf:
@@ -1605,9 +1608,10 @@ paths:
               schema: { $ref: "#/components/schemas/ChangeControlResponse" }
         "400":
           description: |
-            The first failing check, in this order: a malformed body (`Invalid
-            request body`), a reason that is missing or whitespace-only, a blank
-            email, a blank password, then a reason over 500 characters. All run
+            The first failing check, in this order: a blank CC-ID, a malformed body
+            (`Invalid request body`), a reason that is missing or whitespace-only,
+            a blank email, a blank password, then a reason over 500 runes after
+            trimming. All run
             before the record is read, so they precede the 404, 403 and 409.
           content:
             application/json:

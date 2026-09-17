@@ -152,7 +152,7 @@ option B): `Back&nbsp;to&nbsp;List`, or `'Save Draft'` inside a JS string.
 - **Rejected:** `nowrap` in `global.css` (canonical, five copies) and a per-button
   `style:`.
 - ⚠️ **A new bar button without it brings the defect back silently**, and only at
-  narrow widths. Step 10's Cancel CC is the next one. Single-word in-flight labels
+  narrow widths. Step 10's `Cancel&nbsp;CC` has it. Single-word in-flight labels
   (`Saving…`, `Signing…`) need nothing.
 
 **Avoid `:global`** — `global.css` is imported once at the root and applies
@@ -245,16 +245,20 @@ approver's own typing would block their own submission.
   `openEsig(meaning, send)`. `kind: 'requirements'` is the requirements dialog,
   opened **only** by `fail()`, for a body with `issues`.
 - **They share nothing but `.modal > .modal-content`**, which is two copies of that
-  markup. Step 10's cancel modal is the third, so the extraction question is
-  step 10's. B5 makes `EsigModal` earn extraction.
+  markup. **T3 is not a third** (step 10). The signature modal shows the reason
+  field when `meaning === 'Cancelled'`, so the credentials markup exists once.
+- ⚠️ **Extraction, settled at step 10:** the only shared markup is the two wrapper
+  `div`s, and a wrapper component needs `{@render children()}`, which is forbidden
+  outside `+layout.svelte`. So a `Modal` wrapper cannot be built under these rules
+  at any count. `EsigModal` (the whole signature block) has one copy.
 - **No pre-flight state in the signature modal.** Its text would be untrue above a
   list of reasons you cannot sign.
 - **While either is open, `editable()` locks every control** (`&& dialog === null`),
   and `save()` and every submit handler return. The overlay blocks the pointer
   but not Tab.
 - **No Escape-to-close and no focus management** (flag 52). No prototype has
-  either. This is the second modal and step 10 brings a third, so someone should
-  decide it deliberately.
+  either. Two modal blocks now serve four uses (T2, T3, and both gates to come),
+  so someone should decide it deliberately.
 - **Known cost (flag 51):** after the requirements dialog is dismissed, nothing
   marks a date that is present but too early.
 - **Steps 11 and 13 choose the meaning at open time** and build `send` from a

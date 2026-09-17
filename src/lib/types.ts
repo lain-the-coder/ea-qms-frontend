@@ -634,7 +634,9 @@ export type SubmitRequest = ESignatureCredentials;
 
 /** T3. The one transition that collects a reason and credentials together. */
 export interface CancelRequest extends ESignatureCredentials {
-	/** Mandatory, not whitespace-only, ≤500. Permanently read-only once saved. */
+	/** Mandatory, not whitespace-only, ≤500 runes AFTER trimming (so a reason
+	 *  padded past 500 with spaces is accepted). Stored trimmed. Permanently
+	 *  read-only once saved. */
 	cancellation_reason: string;
 }
 

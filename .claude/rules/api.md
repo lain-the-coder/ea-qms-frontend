@@ -202,16 +202,44 @@ business-day rules**, which the server checks in the same pass as presence:
 ⚠️ **Never trim the password.** The Go trims the email and not the password.
 The prototypes trim both.
 
+**Trimming is decided per field** (step 10). A client-side check applies what
+the server applies to that field, and every value is **sent as typed**:
+
+| Field | Go | Client check | Sent |
+|---|---|---|---|
+| password | not trimmed | `=== ''` | as typed |
+| email | `TrimSpace` | `.trim() === ''` | as typed |
+| `cancellation_reason` | `TrimSpace`, then ≤500 runes | `.trim() === ''`, `[...trim()].length > 500` | as typed |
+
+The U+0085 / U+FEFF mismatch is safe for a check. The client refuses a reason
+that is only U+FEFF, and anything the server refuses instead is a plain 400,
+which stays in the modal.
+
 **The modal's outcomes** (one modal, `openEsig(meaning, send)`):
 
 | Result | Do |
 |---|---|
 | 200 | `setRecord(response)`, close, set the notice, refetch **signatures only** |
-| 401 `Invalid credentials` | stay open, clear the password |
-| 0 / 500 | stay open, the message verbatim; a retry is safe (a committed first attempt gets 409) |
+| 401 `Invalid credentials` | stay open, clear **only** the password; the email and T3's reason are kept |
+| 0 / 500 | stay open, the message verbatim, nothing cleared; a retry is safe (a committed first attempt gets 409) |
+| 400 without `issues` | **stay open, the message verbatim, nothing cleared** (step 10) |
 | 409 | close, pinned error in the bar, reload |
 | 400 with `issues` | swap to the requirements dialog, credentials cleared |
-| 400 / 403 / 404 | close, error in the bar |
+| 403 / 404 | close, error in the bar |
+
+⚠️ **The rule: an error goes where the user can act on it.** Failures about the
+record close the modal. A plain 400 is always a body check made before the
+transaction, and for T2 and T3 every body value is typed **in** the modal. **This
+row holds only while that is true.** T4/T5 and T7/T8 carry fields from the form
+behind the modal ("Decision Comments cannot be blank"), so step 11 must decide
+the row for them.
+
+⚠️ **T3 is the signature modal, not a third one.** `openEsig('Cancelled', send)`.
+`cancelling = meaning === 'Cancelled'` adds the reason field, the prototype's
+heading and subtitle, and a red confirm button. `send` builds a `CancelRequest`
+from `esigReason` when called. `closeDialog()` clears the reason with the
+credentials. **No presence gate. It refuses while dirty**, through
+`unsavedRefusal('cancelling')`, like both submits.
 
 ⚠️ **The signatures refetch takes its own `mine` check after its own `await`.**
 The 200's check does not cover a second request.
@@ -313,8 +341,9 @@ change_title: form.change_title === '' ? null : form.change_title  // form → A
 `'' → null` is **load-bearing** on five fields, where `""` is a 400: the four
 dates and times, and `assigned_approver_id`. On the 13 text fields and six enum
 selects it only tidies, because the server trims and nulls `""` itself.
-**Never trim on the client**: Go's `TrimSpace` and JavaScript's `trim()` disagree
-on U+0085 and U+FEFF.
+**Never trim a value you send**: Go's `TrimSpace` and JavaScript's `trim()`
+disagree on U+0085 and U+FEFF. (A client-side *check* may trim where the server
+does. See Transitions.)
 
 `form` and the record (`cc`) are **two objects**. Only a fetch or a save response
 replaces `cc`, and `form` is rebuilt from it every time, since the server trims.
