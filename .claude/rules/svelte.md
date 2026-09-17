@@ -57,7 +57,11 @@ Forward**, and the sidebar link tapped while already on that route. Clear
 them. `ChangeControlList.svelte` is the worked example.
 
 ⚠️ **`beforeNavigate` is the unsaved-edits guard, on the CC form only** (flag 43).
-- **Return early when `!dirty` or `auth.user === null`.** `request()`'s forced
+- **It reads two predicates** (step 11, flag 47): `dirty` (unsaved edits) and
+  `unsubmitted` (an assigned approver's typed decision, which nothing saves).
+  Each has its own sentence, because "unsaved changes" is untrue for a buffer.
+  **Never fold `unsubmitted` into `dirty`.**
+- **Return early when neither is true, or `auth.user === null`.** `request()`'s forced
   sign-out calls `goto('/login')`, which runs the same callbacks. A prompt there
   lets the user stay on a form that cannot save.
 - **Every sign-out must clear `auth.user` before it navigates.** That includes
@@ -238,7 +242,10 @@ The two decision objects are **input buffers**. No endpoint writes `decision`,
 `risk_level`, `decision_comments`, `final_decision` or `final_comments` except
 the transition itself, so there is nothing for them to be unsaved *from*.
 **Do not fold them into `dirty`**: the submit gate refuses while `dirty`, so an
-approver's own typing would block their own submission.
+approver's own typing would block their own submission. **They are guarded
+separately**, by `unsubmitted`: the buffer compared through `changes()` against
+the builder that seeded it, in the gate's state, for the assigned approver only.
+The guard reads it, and the bar does not.
 
 ⚠️ **Two dialogs in the markup, one `dialog` state** (decisions 88 and 90).
 - **The two:** `kind: 'sign'` is the e-signature modal, opened with

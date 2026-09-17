@@ -808,7 +808,8 @@ export interface ChangeControlListParams {
 	 * ⚠️ For "either pending state", make one call per state. Do NOT use the
 	 * dashboard's `pending_approvals` block: it is capped at 2 items
 	 * (`dashboardCardItems`), so a queue built from it silently shows at most
-	 * two records.
+	 * two records. And an ABSENT state with `assigned=me` is not "both gates":
+	 * it returns every state the caller is assigned in.
 	 */
 	state?: State;
 	/**

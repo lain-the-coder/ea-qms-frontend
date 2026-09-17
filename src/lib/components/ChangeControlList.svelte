@@ -1,5 +1,5 @@
 <!--
-	The change-control list, mounted at two URLs (decision 29).
+	The change-control list, mounted at three URLs (decision 29, step 11).
 
 	Markup from docs/prototypes/owner/all-change-controls.html, whose approver
 	and admin variants differ only in the Create button and the eye link's
@@ -10,13 +10,20 @@
 	link and the Ownership select — and the Ownership select is gone, so what
 	is left is one screen.
 
+	`/approvals` (approver/approvals.html) is this with `assigned=me`, a State
+	select offering only the two gates, a default gate, and no Create. ⚠️
+	There is no "All" option: the handler takes ONE state, and with none it
+	returns every state the caller is assigned in — Initiated, In
+	Implementation and Closed included — not "both gates". So each view is
+	one gate, with a correct `total` and pagination (step 11, Lain's ruling).
+
 	THE URL IS THE REQUEST. Every filter and every page lives in the query
 	string, so each is `$derived` (B3): a query parameter changes without
 	remounting, and a plain `let` would read once and go stale with no error
 	anywhere. An invalid value is passed to the API verbatim and its 400 is
 	rendered, rather than being quietly reinterpreted here.
 
-	`owner` is the one exception, below.
+	`owner` and `assigned` are the exceptions, below.
 -->
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
@@ -28,10 +35,30 @@
 	import {
 		STATES,
 		type ChangeControlListResponse,
-		type CreateChangeControlResponse
+		type CreateChangeControlResponse,
+		type State
 	} from '$lib/types';
 
-	let { title, ownerPreset = false }: { title: string; ownerPreset?: boolean } = $props();
+	let {
+		title,
+		preset,
+		stateOptions = STATES,
+		defaultState,
+		allowCreate = true
+	}: {
+		title: string;
+		/** Which `…=me` flag this screen sets itself. Never read from the URL. */
+		preset?: 'owner' | 'assigned';
+		/** What the State select offers. */
+		stateOptions?: readonly State[];
+		/**
+		 * Sent when the URL carries no `state`, and shown as the select's value.
+		 * When set, the select has no "All States" option — "All" cannot sit
+		 * beside a default that is not all.
+		 */
+		defaultState?: State;
+		allowCreate?: boolean;
+	} = $props();
 
 	// The (app) layout mounts this page only once `auth.user` is set.
 	const user = $derived(auth.user!);
@@ -58,23 +85,25 @@
 	/**
 	 * The query string sent to the API.
 	 *
-	 * ⚠️ `owner` is set here and NEVER read from the URL. The handler tests
-	 * `q.Get("owner") == "me"` exactly, so any other value — a UUID, `ME`, a
-	 * leading space — leaves the filter unapplied and returns the unfiltered
-	 * list with `200 OK` and no warning. Reading it from the URL would let a
-	 * hand-edited `?owner=<someone else's uuid>` leave a page headed "My Change
-	 * Controls" listing everyone's records, with nothing at all to show for it.
+	 * ⚠️ `owner` and `assigned` are set here and NEVER read from the URL. The
+	 * handler tests `q.Get("owner") == "me"` and `q.Get("assigned") == "me"`
+	 * exactly, so any other value — a UUID, `ME`, a leading space — leaves the
+	 * filter unapplied and returns the unfiltered list with `200 OK` and no
+	 * warning. Reading it from the URL would let a hand-edited
+	 * `?owner=<someone else's uuid>` leave a page headed "My Change Controls"
+	 * listing everyone's records, with nothing at all to show for it.
 	 *
 	 * The four filters and `offset` pass through verbatim; `limit` falls back
-	 * to the UI's default when absent.
+	 * to the UI's default when absent, and `state` to `defaultState`.
 	 */
 	function buildQuery(q: URLSearchParams): string {
 		const out = new URLSearchParams();
-		if (ownerPreset) out.set('owner', 'me');
+		if (preset) out.set(preset, 'me');
 		for (const name of [...FILTERS, 'offset'] as const) {
 			const value = q.get(name);
 			if (value !== null && value !== '') out.set(name, value);
 		}
+		if (defaultState && !out.has('state')) out.set('state', defaultState);
 		out.set('limit', q.get('limit') || String(DEFAULT_LIMIT));
 		return out.toString();
 	}
@@ -264,7 +293,7 @@
 	<div>
 		<h1>{title}</h1>
 	</div>
-	{#if user.role === 'CC Owner'}
+	{#if allowCreate && user.role === 'CC Owner'}
 		<!-- As on the dashboard: Create is a POST followed by a `goto`, so it
 		     is a button rather than the prototype's link. `POST
 		     /changecontrols` is `requireRole(roleCCOwner)`, and `requireRole`
@@ -296,7 +325,7 @@
      assigned one, enforced when the approver is set. So for every one of the
      four roles at least one option can only ever return zero rows.
 
-     `/my-change-controls` is the owner half; the approver's queue is step 11. -->
+     `/my-change-controls` is the owner half; `/approvals` is the approver's. -->
 <section class="card">
 	<div class="search-filter-section">
 		<div class="search-box">
@@ -315,7 +344,8 @@
 		<div class="filter-row">
 			<div class="filter-group">
 				<label for="filter-state">State</label>
-				<!-- Iterating STATES keeps the six strings in one place
+				<!-- Iterating `stateOptions` (STATES unless a screen narrows it)
+				     keeps the strings in one place
 				     (decision 4). It includes Cancelled, which the prototype's
 				     dropdown omits — cancelled records do appear in this list,
 				     so a filter that cannot select them would be the only state
@@ -323,11 +353,13 @@
 				<select
 					id="filter-state"
 					class="filter-select"
-					value={stateFilter}
+					value={stateFilter || defaultState || ''}
 					onchange={(e) => setParam('state', e.currentTarget.value)}
 				>
-					<option value="">All States</option>
-					{#each STATES as option}
+					{#if !defaultState}
+						<option value="">All States</option>
+					{/if}
+					{#each stateOptions as option}
 						<option value={option}>{option}</option>
 					{/each}
 				</select>
@@ -502,8 +534,11 @@
 				<p class="empty-state-message">
 					{#if filtered}
 						No change controls match these filters.
-					{:else if ownerPreset}
+					{:else if preset === 'owner'}
 						You don't own any change controls yet.
+					{:else if preset === 'assigned'}
+						<!-- No "yet": a queue empties as it is worked. -->
+						You aren't assigned any change controls in the {defaultState} state.
 					{:else}
 						There are no change controls yet.
 					{/if}

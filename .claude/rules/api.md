@@ -210,6 +210,11 @@ the server applies to that field, and every value is **sent as typed**:
 | password | not trimmed | `=== ''` | as typed |
 | email | `TrimSpace` | `.trim() === ''` | as typed |
 | `cancellation_reason` | `TrimSpace`, then ≤500 runes | `.trim() === ''`, `[...trim()].length > 500` | as typed |
+| `decision_comments` · `final_comments` | `TrimSpace`, then ≤2000 runes | in `submitGate`: `.trim() === ''`, `[...trim()].length > 2000` | as typed |
+
+⚠️ **The comment length check runs at the two approver gates only.** T2 and T6
+check no lengths, and the columns are plain `TEXT`, so a value over the limit
+written straight to the database passes both. Do not widen the rule to them.
 
 The U+0085 / U+FEFF mismatch is safe for a check. The client refuses a reason
 that is only U+FEFF, and anything the server refuses instead is a plain 400,
@@ -229,10 +234,18 @@ which stays in the modal.
 
 ⚠️ **The rule: an error goes where the user can act on it.** Failures about the
 record close the modal. A plain 400 is always a body check made before the
-transaction, and for T2 and T3 every body value is typed **in** the modal. **This
-row holds only while that is true.** T4/T5 and T7/T8 carry fields from the form
-behind the modal ("Decision Comments cannot be blank"), so step 11 must decide
-the row for them.
+transaction, and for T2 and T3 every body value is typed **in** the modal.
+⚠️ **T4/T5 and T7/T8 keep the same row (step 11)**, although their bodies carry
+fields from the form behind the modal. The gate trims and checks lengths, so only
+a U+0085 or U+FEFF paste reaches a field 400. The same U+0085 in the email draws
+`Email cannot be blank`, which belongs in the modal. Telling them apart needs the
+message (forbidden) or Go's whitespace table (rejected), and routing by
+transition misroutes the email case. **No mechanism: the field 400 shows in the
+modal, verbatim.**
+
+⚠️ **T4/T5: the meaning follows the decision**, from a
+`Record<Decision, SignatureMeaning>`, and `send` is built from a snapshot of the
+buffer taken at click time.
 
 ⚠️ **T3 is the signature modal, not a third one.** `openEsig('Cancelled', send)`.
 `cancelling = meaning === 'Cancelled'` adds the reason field, the prototype's

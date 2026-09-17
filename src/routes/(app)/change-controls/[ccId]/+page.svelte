@@ -59,6 +59,7 @@
 		type CancelRequest,
 		type ChangeControlResponse,
 		type ListApproversResponse,
+		type Decision,
 		type DecisionRequest,
 		type ESignatureCredentials,
 		type ErrorBody,
@@ -550,14 +551,21 @@
 	 * - Everything else runs synchronously here, so `confirm()` can decide.
 	 *   A styled dialog cannot be awaited in time (decision 59 is about
 	 *   reporting, which has an in-page home; this is a question).
+	 * - Two predicates, two sentences (step 11, flag 47). `dirty` is unsaved
+	 *   edits; `unsubmitted` is an approver's typed decision, which nothing
+	 *   saves, so "unsaved changes" would be wrong for it. They are mutually
+	 *   exclusive by state.
 	 */
 	beforeNavigate((navigation) => {
-		if (!dirty || auth.user === null) return;
+		if ((!dirty && !unsubmitted) || auth.user === null) return;
 		if (navigation.type === 'leave') {
 			navigation.cancel();
 			return;
 		}
-		if (!confirm('Leave this page? Your unsaved changes will be lost.')) navigation.cancel();
+		const question = dirty
+			? 'Leave this page? Your unsaved changes will be lost.'
+			: 'Leave this page? Your decision has not been submitted and will be lost.';
+		if (!confirm(question)) navigation.cancel();
 	});
 
 	// ── Display helpers ─────────────────────────────────────────────────────
@@ -1151,6 +1159,34 @@
 	);
 
 	/**
+	 * Whether the assigned approver has typed a decision that is not submitted:
+	 * the gate's buffer differs from what the record seeded it with. Flag 47.
+	 *
+	 * ⚠️ DELIBERATELY NOT A TERM OF `dirty`. `submitGate()` refuses while
+	 * `dirty`, so folding the buffers in would make every Submit Decision answer
+	 * "Save your changes before submitting" for changes that have no save.
+	 * `dirty` means unsaved edits to a saved record; nothing saves these fields
+	 * but the transition itself (decision 80). This predicate is read only by
+	 * the navigation guard, and not by the bar, where "Unsaved changes" would
+	 * be untrue.
+	 *
+	 * The same definition of "changed" as the saves: `changes()` against the
+	 * builder that seeded the buffer. So a leftover rejection's pre-filled
+	 * values read false until the approver actually types, and a 200 clears
+	 * it by rebuilding the buffer. One term per gate; step 13 adds nothing.
+	 */
+	const unsubmitted = $derived(
+		cc !== null &&
+			isAssignedApprover() &&
+			((cc.current_state === 'Pending Implementation Approval' &&
+				implDecision !== null &&
+				Object.keys(changes(implDecision, toImplDecisionForm(cc))).length > 0) ||
+				(cc.current_state === 'Pending Final Approval' &&
+					finalDecision !== null &&
+					Object.keys(changes(finalDecision, toFinalDecisionForm(cc))).length > 0))
+	);
+
+	/**
 	 * The error the bar shows (flag 42, decision 89): the recorded one, while
 	 * the screen still matches the one it was about. Once the user changes
 	 * anything it hides, and "Unsaved changes" shows instead. Undo back to that
@@ -1317,7 +1353,7 @@
 	 *
 	 *   after 8a  2 uses   the two Submit Decisions
 	 *   after 8b  3 uses   + Submit for Final Approval
-	 *   step 11   2 uses   the implementation gate's goes
+	 *   step 11   2 uses   the implementation gate's went
 	 *   step 13   0 uses   the final gate's and Submit for Final Approval's go,
 	 *                      and this declaration and both comments go with them
 	 *
@@ -1398,11 +1434,20 @@
 		// uploaded file. T6 checks it with `FileAttachmentExists`, so the
 		// client checks the record, not the buffer. Without this branch it
 		// would read as blank and be reported missing on every submit.
+		//
+		// Presence is tested after `trim()`, because every transition trims
+		// before its blank check (step 10's rule: a check applies what the
+		// server applies; the value is still sent as typed). Without it `"   "`
+		// passes here, opens the modal, and draws a plain 400 after the password
+		// (flag 53b). JavaScript's trim leaves U+0085, which Go's removes, so a
+		// U+0085 paste still reaches the server — and its 400 stays in the modal
+		// (decision 95). For T2 and T6 the values are the stored row, which the
+		// saves already trimmed, so nothing changes there.
 		const missing = MANDATORY[record.current_state]
 			.filter((field) =>
 				field === 'implementation_evidence'
 					? record.implementation_evidence === null
-					: (values[field] ?? '') === ''
+					: (values[field] ?? '').trim() === ''
 			)
 			.map((field) => FIELD_LABELS[field]);
 
@@ -1430,6 +1475,31 @@
 			}
 		}
 
+		// ⚠️ The approver gates' length limits, counted in runes AFTER trimming,
+		// with the Go's sentence — as T4/T5 and T7/T8 check their comments before
+		// the transaction opens. The buffers are the only mandatory values that
+		// never went through a save's length check, so without this an over-long
+		// comment opens the modal, collects a password, and draws a certain 400.
+		// T3's reason is refused the same way in `sign()` (decision 96).
+		//
+		// ⚠️ ONLY IN THE TWO GATE STATES. Do not widen it to T2 or T6: neither
+		// submit handler checks length, and the columns are plain TEXT, so a
+		// value over the limit written straight to the database is ACCEPTED by
+		// both. Refusing it here would block a transition the server allows.
+		// (Postman cannot produce one: it goes through the save, which checks.)
+		if (
+			record.current_state === 'Pending Implementation Approval' ||
+			record.current_state === 'Pending Final Approval'
+		) {
+			for (const field of MANDATORY[record.current_state]) {
+				const limit = LIMITS[field];
+				const value = values[field];
+				if (limit !== undefined && value !== undefined && [...value.trim()].length > limit) {
+					rules.push(`${FIELD_LABELS[field]} must be ${limit} characters or fewer`);
+				}
+			}
+		}
+
 		if (missing.length > 0 || rules.length > 0) {
 			return { error: 'Cannot submit: some requirements are not met', issues: [...missing, ...rules] };
 		}
@@ -1448,16 +1518,49 @@
 	 * step could remove on its own — which is exactly what flag 45's count
 	 * exists to prevent.
 	 *
-	 * Both are synchronous throughout: no request, no `await`, so no in-flight
-	 * window. Steps 11 and 13 replace the `fail(…)` with `openEsig()`, choosing
-	 * the meaning from the decision and building `send` from a SNAPSHOT of the
-	 * buffer, so what the modal shows is exactly what is signed (A7.5).
+	 * Both are synchronous up to the modal: no request, no `await`, so no
+	 * in-flight window. Each opens `openEsig()` with the meaning chosen from the
+	 * decision and `send` built from a SNAPSHOT of the buffer, so what the modal
+	 * shows is exactly what is signed (A7.5). The final gate is wired at step 13.
 	 */
+
+	// The meaning is per TRANSITION, not per endpoint (A7.5): one endpoint, two
+	// meanings, chosen by the decision. Typed against `SignatureMeaning`, so the
+	// ASCII hyphens are checked against types.ts. Both prototypes hardcode the
+	// approve string.
+	const IMPL_DECISION_MEANING: Record<Decision, SignatureMeaning> = {
+		Approve: 'Approved - Implementation Approval',
+		Reject: 'Rejected - Implementation Approval'
+	};
+
 	function submitImplDecision() {
-		if (implDecision === null || dialog !== null) return;
+		if (cc === null || implDecision === null || dialog !== null) return;
 		actionError = null;
 		actionNotice = null;
-		fail(submitGate(implDecision) ?? SIGNATURE_NOT_BUILT);
+		const refusal = submitGate(implDecision);
+		if (refusal !== null) {
+			fail(refusal);
+			return;
+		}
+		// The snapshot, taken now. Captured into a `const` because the `$state`
+		// is reassignable, so TypeScript drops its narrowing inside callbacks.
+		// `find` narrows the two select values to their unions without a cast.
+		// Neither can be undefined here: the gate refused blanks, the selects
+		// offer only `types.ts` members, and the stored values carry CHECK
+		// constraints (`ck_cc_decision`, `ck_cc_risk_level`).
+		const buffer = implDecision;
+		const decision = DECISIONS.find((d) => d === buffer.decision);
+		const risk_level = RISK_LEVELS.find((r) => r === buffer.risk_level);
+		if (decision === undefined || risk_level === undefined) return;
+		// Sent as typed: the server trims (step 10's rule).
+		const fields = { decision, risk_level, decision_comments: buffer.decision_comments };
+		const path = `/changecontrols/${encodeURIComponent(cc.cc_id)}/decision`;
+		// `send` reads the snapshot, never the buffer. The `dialog` lock in
+		// `editable()` also freezes the buffer on screen while the modal is open.
+		openEsig(IMPL_DECISION_MEANING[decision], (credentials) => {
+			const body: DecisionRequest = { ...credentials, ...fields };
+			return request<ChangeControlResponse>('POST', path, body);
+		});
 	}
 
 	function submitFinalDecision() {
@@ -1651,10 +1754,18 @@
 	 * A plain 400 is always a body check made before the transaction opens,
 	 * so it is about something the user typed. For T2 and T3 everything in
 	 * the body is typed IN this modal — credentials, and T3's reason — so it
-	 * stays here with the value to fix (step 10, flag 53). ⚠️ That holds only
-	 * while every caller's body is typed in the modal. T4/T5 and T7/T8 carry
-	 * fields from the form behind it ("Decision Comments cannot be blank"),
-	 * which belong to the bar: step 11 revisits this row.
+	 * stays here with the value to fix (step 10, flag 53).
+	 *
+	 * ⚠️ T4/T5 and T7/T8 also carry fields from the form BEHIND the modal, and
+	 * the row stays as it is for them too (step 11). `submitGate()` trims and
+	 * checks the comment lengths, so ordinary typing reaches no field 400.
+	 * What remains is a paste: U+0085 as the whole comment ("… cannot be
+	 * blank"), or U+FEFF past the limit. The same U+0085 in the email draws
+	 * "Email cannot be blank", which belongs HERE. Routing by transition or by
+	 * a flag would misroute that one; routing by message is forbidden; and
+	 * copying Go's whitespace table was rejected at decision 96. So a field 400
+	 * shows here verbatim, naming the field, with Back beside it — which keeps
+	 * the buffer, since `closeDialog()` clears only the modal's own fields.
 	 *
 	 * A 401 `Unauthorized` never lands here: `request()` refreshes and retries,
 	 * or ends the session, which unmounts this page (decision 13).

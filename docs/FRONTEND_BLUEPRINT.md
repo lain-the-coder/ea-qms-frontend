@@ -629,6 +629,14 @@ check, both directions are safe: the client refuses a reason that is only
 U+FEFF, which the server would have stored, and anything the server refuses
 instead comes back as a plain 400 that stays in the modal (A7.8).
 
+**The gate buffers follow the same rule (step 11).** `decision_comments` and
+`final_comments` are checked in the submit gate after `trim()` for blank, and
+their 2000-rune limit is counted after the trim, because T4/T5 and T7/T8 do both
+before the transaction opens. ⚠️ **The length check runs at those two gates
+only.** T2 and T6 check no lengths, and the columns are plain `TEXT`, so a value
+over the limit written straight to the database passes both. Refusing it there
+would block a transition the server allows.
+
 Two mechanics behind the row, both deliberate:
 - It is written with `cfg.db`, **not** the transaction, so it survives the
   `defer tx.Rollback()` that undoes everything else.
@@ -734,8 +742,15 @@ permanent record and the screen that authorised it should agree.
   in the modal, so a plain 400 stays in the modal, nothing cleared.
 - A 401 `Invalid credentials` clears **only** the password. The email and the
   reason are kept.
-- ⚠️ T4/T5 and T7/T8 carry fields from the form behind the modal, so a plain 400
-  there can name a field the modal cannot fix. Step 11 decides that row.
+- ⚠️ **T4/T5 and T7/T8 carry fields from the form behind the modal, and the row
+  is unchanged for them (step 11).** The submit gate trims and checks the comment
+  lengths (A7.3), so ordinary typing reaches no field 400. Only a paste does:
+  U+0085 as the whole comment, or U+FEFF past the limit. The same U+0085 in the
+  email draws `Email cannot be blank`, which belongs in the modal. The code
+  cannot tell the two apart without the message (forbidden) or a copy of Go's
+  whitespace table (rejected at step 10), and routing by transition would
+  misroute the email case. So a field 400 shows in the modal verbatim, naming
+  the field. Back is beside it, and it keeps the form's buffer.
 
 ## A8. Errors
 
@@ -895,6 +910,9 @@ history oldest-first.
   one string, so `A,B` is a 400 `Invalid state`. For "either pending state",
   make **one call per state**. Filtering an unfiltered `?assigned=me` on the
   client breaks `total` and pagination.
+  ⚠️ **An unfiltered `?assigned=me` is not "both gates".** It returns every
+  state the caller is assigned in: Initiated, In Implementation and Closed as
+  well. At step 11 the approver had 14 records, 7 of them pending.
   ⚠️ **Not the dashboard's `pending_approvals` block.** It spans both gates but
   is capped at **2 items** (`dashboardCardItems`). An approver with seven
   pending records would see two, with no error. Its `pending_approvals_total`
@@ -1043,8 +1061,16 @@ when the requested role *differs*, so a body carrying your own current role is a
 Name, email and role display only.
 
 ### Approvals
-`?assigned=me` returns your records but takes **one** state. For both gates,
-make one `?assigned=me&state=…` call per pending state (A9.2).
+`?assigned=me` returns your records but takes **one** state, and with none it
+returns **every** state you are assigned in, not just the two gates (A9.2).
+
+**Built at step 11 as one list with one gate at a time.** The State select offers
+only Pending Implementation Approval and Pending Final Approval, with **no "All"
+option**, and the page lands on the first. Each view is one
+`?assigned=me&state=…` request, so `total` and pagination are exact. It is
+`ChangeControlList` with props, not a copy. **Known cost:** the dashboard's
+pending count spans both gates, so it can read higher than the landing view,
+and nothing on the page says the other gate holds more.
 
 ⚠️ **The dashboard's `pending_approvals` block is not a substitute.** It spans
 both gates, but it is capped at 2 items, and only `pending_approvals_total` is
@@ -1668,7 +1694,7 @@ end to end, and do not merge two because they feel contiguous.
 | **8b** | **The `In Implementation` slice and its save** — `PUT /{ccID}/implementation`, Save Draft in that state, and Submit for Final Approval's gate. Absorbed from step 12 | The second save endpoint, and dirty tracking over a second form object. See below |
 | 9 | **T2 submit + the e-signature modal** — written once, inline, and opened with a meaning and a sender, so steps 11 and 13 reuse it. Also: the date rules in the submit gate, a requirements dialog for every `issues` body, and the bar's error ordering (flag 42) | The first transition end to end, the save-then-submit gate, and the modal's three outcome paths: a rejected signature, a transport failure, and a failure about the record |
 | 10 | **T3 cancel** — the step-9 signature modal, which asks for the reason when the meaning is `Cancelled`. Amended at step 10: not a third modal | The one transition that collects **a reason *and* credentials together**, and where a body error belongs when the field is inside the modal (A7.8) |
-| 11 | **Approver flow** — the queue, and the implementation decision (T4/T5) | The second role, and the first approval gate |
+| 11 | **Approver flow** — the queue (`/approvals`: the list with `assigned=me`, one gate at a time), and the implementation decision (T4/T5) through the step-9 modal, with the meaning chosen by the decision. Also: a navigation guard for the gate buffers, separate from `dirty` | The second role, the first approval gate, and a leftover rejection on screen |
 | 12 | **File upload** — the evidence control. Narrowed at step 8: the save half moved to 8b | `FormData`, the part named `file`, and the PDF/size limits |
 | 13 | **T6 + the final decision (T7/T8)**. The signature history panel moved to 7a | The remaining gates, and the full state machine exercised |
 | 14 | **File download** | Blob handling, `Content-Disposition` |

@@ -9,4 +9,4 @@
 	import ChangeControlList from '$lib/components/ChangeControlList.svelte';
 </script>
 
-<ChangeControlList title="My Change Controls" ownerPreset />
+<ChangeControlList title="My Change Controls" preset="owner" />
