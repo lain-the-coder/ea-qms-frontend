@@ -4,7 +4,8 @@
 	sends only the fields that differ from the record. 7d shows, continuously,
 	whether any do: the gate step 9's Submit depends on. Step 9 adds T2 and
 	the one e-signature modal every signed transition opens. Step 10 adds T3,
-	which opens that same modal with a reason field in it.
+	which opens that same modal with a reason field in it. Step 12 adds the
+	evidence upload, whose response is the record, like a save's.
 
 	Markup from docs/prototypes/owner/cc-form-closed.html, the one prototype
 	with every section populated. The other cc-form-* prototypes differ in which
@@ -16,17 +17,14 @@
 	by anyone (CC ID, the approval By/On values, the statuses…), so they stay as
 	the prototype's `.meta-value` text.
 
-	THE RECORD, AND THREE OBJECTS OVER IT. `cc` is what the server last sent.
-	`draftForm` holds the owner's 24 Initiated fields, `implDecision` and
-	`finalDecision` hold the approver's 3 and 2 at the two gates. Binding
-	straight to `cc` would overwrite the server's version on the first
-	keystroke, and then neither the save body (7c) nor the dirty check (7d)
-	could tell what changed. Only `setRecord()` sets them to a record, and only
-	`load()` clears them — all four together, both ways.
-
-	The five In Implementation fields still take `value=` from `cc`. They save
-	through a second endpoint that step 8b adds; until then they are disabled,
-	because editable fields with nothing to save them with lose work silently.
+	THE RECORD, AND FOUR OBJECTS OVER IT. `cc` is what the server last sent.
+	`draftForm` holds the owner's 24 Initiated fields, `implForm` their 5 In
+	Implementation fields, and `implDecision` and `finalDecision` the
+	approver's 3 and 2 at the two gates. Binding straight to `cc` would
+	overwrite the server's version on the first keystroke, and then neither
+	the save body (7c) nor the dirty check (7d) could tell what changed. Only
+	`setRecord()` sets them to a record, and only `load()` clears them — all
+	five together, both ways.
 
 	PERMISSION IS BY IDENTITY, NOT ROLE. `mayEdit()` has one arm per state, and
 	each asks whether this user is that state's actor — the record's owner, or
@@ -173,8 +171,8 @@
 				// live in `implForm` and save through PUT …/implementation; the
 				// evidence is editable too but belongs to the upload endpoint, so
 				// it has no form value and is named explicitly. `mayEdit` being
-				// true for it is what puts the asterisk on its label at T6 — the
-				// control itself arrives at step 12.
+				// true for it is what renders the upload box (step 12) and puts
+				// the asterisk on its label.
 				return (
 					isOwner() &&
 					implForm !== null &&
@@ -189,16 +187,18 @@
 	}
 
 	/**
-	 * Whether the control is enabled right now: permission, no save in flight,
-	 * and no signature modal open. Every control's `disabled` comes from here,
-	 * so the Security Matrix lives in one function rather than in 34 attributes
-	 * (decision 48).
+	 * Whether the control is enabled right now: permission, no save or upload
+	 * in flight, and no signature modal open. Every control's `disabled` comes
+	 * from here, so the Security Matrix lives in one function rather than in 34
+	 * attributes (decision 48).
 	 *
 	 * The locks are here and not in `mayEdit` because `required()` reads
 	 * permission. Locking there too would drop every asterisk for the length of
-	 * each save. Two locks, two reasons:
-	 * - `saving`: a save response rebuilds `draftForm`, so a keystroke typed
-	 *   mid-save would be lost (flag 32).
+	 * each save. Three locks, two reasons:
+	 * - `saving` and `uploading`: both responses go through `setRecord()`,
+	 *   which rebuilds every form object, so a keystroke typed mid-request
+	 *   would be lost (flag 32). Separate flags only because each drives its
+	 *   own in-flight label (decision 105).
 	 * - `dialog`: a modal's overlay blocks the pointer but not Tab. Without the
 	 *   lock a keyboard user could edit the form behind the signature modal,
 	 *   making it dirty after the gate passed, or changing a decision it is
@@ -206,7 +206,7 @@
 	 *   locks too: it is a modal, so the form waits until it is dismissed.
 	 */
 	function editable(field: EditableField): boolean {
-		return mayEdit(field) && !saving && dialog === null;
+		return mayEdit(field) && !saving && uploading === null && dialog === null;
 	}
 
 	/**
@@ -332,11 +332,12 @@
 	let approversError = $state<string | null>(null);
 
 	/**
-	 * The only place `cc` or any of the three form objects is set to a record
-	 * (`load()` only clears them). The fetch and the save response both call
-	 * it. Each object is rebuilt from `cc` every time, whole: the server trims
-	 * text and nulls `''`, so a form that kept its own values would disagree
-	 * with the record after every save.
+	 * The only place `cc` or any of the four form objects is set to a record
+	 * (`load()` only clears them). The fetch, both saves, the upload and every
+	 * transition call it: each responds with the whole record. Each object is
+	 * rebuilt from `cc` every time, whole: the server trims text and nulls
+	 * `''`, so a form that kept its own values would disagree with the record
+	 * after every save.
 	 */
 	function setRecord(next: ChangeControlResponse) {
 		cc = next;
@@ -345,8 +346,8 @@
 		implDecision = toImplDecisionForm(next);
 		finalDecision = toFinalDecisionForm(next);
 		// No partial date can survive this. `load()` unmounts the form, so its
-		// inputs are fresh. A 200 save cannot start while one is partial, and
-		// the lock disables the inputs while it runs.
+		// inputs are fresh. A save or an upload cannot start while one is
+		// partial, and the lock disables the inputs while it runs.
 		incomplete = [];
 	}
 
@@ -1320,12 +1321,171 @@
 	 *
 	 * Nothing saves while the signature modal is open: the overlay blocks the
 	 * pointer but not Tab, and a save then would change the stored row between
-	 * the gate and the signature.
+	 * the gate and the signature. Nor during an upload, whose response is about
+	 * to rebuild the form (decision 105).
 	 */
 	function save() {
-		if (dialog !== null) return;
+		if (dialog !== null || uploading !== null) return;
 		if (canSaveDraft()) return saveDraft();
 		if (canSaveImplementation()) return saveImplementation();
+	}
+
+	// ── Evidence upload ─────────────────────────────────────────────────────
+
+	/**
+	 * The name of the file being uploaded, or `null`. The upload's own lock
+	 * (decision 105), kept apart from `saving` only because the Save button
+	 * reads `saving` for its "Saving…" label. The two cannot overlap: the
+	 * upload refuses while a save runs, through `unsavedRefusal()`, and
+	 * `save()` returns while this is set.
+	 */
+	let uploading = $state<string | null>(null);
+
+	// `maxUploadBytes = 10 << 20` in `constants.go`, compared with `>`.
+	const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+
+	/**
+	 * Three of `HandlerUploadFile`'s checks, in its order and with its
+	 * sentences (decision 106). Each is one the server would certainly fail,
+	 * after the whole file had been sent. Over about 11 MB, `MaxBytesReader`
+	 * closes the connection mid-upload, so the browser may report status 0
+	 * rather than the 400 (flag 57).
+	 *
+	 * `endsWith('.pdf')` after `toLowerCase()` is the same test as Go's
+	 * `strings.ToLower(filepath.Ext(name)) != ".pdf"`: both look at what
+	 * follows the last dot.
+	 *
+	 * NOT the magic-byte check. It would need an async read of the file, to
+	 * produce the sentence the server already sends. The server decides it,
+	 * and `accept` on the input only filters the picker.
+	 */
+	function evidenceRefusal(file: File): ErrorBody | null {
+		if (file.size > MAX_UPLOAD_BYTES) return { error: 'File must be 10 MB or smaller' };
+		if (!file.name.toLowerCase().endsWith('.pdf')) return { error: 'Only PDF files are accepted' };
+		if (file.size === 0) return { error: 'File payload cannot be empty' };
+		return null;
+	}
+
+	/**
+	 * A click or Enter on the upload box.
+	 *
+	 * ⚠️ AN UPLOAD REFUSES WHILE DIRTY (decision 105). A 200 goes through
+	 * `setRecord()`, which rebuilds `implForm` from the response, so any
+	 * unsaved edit to the five fields would be discarded silently. The lock
+	 * cannot help, because those edits were typed BEFORE the click. Keeping
+	 * `implForm` across the response instead would let a stale value from
+	 * another tab's save pass for the user's edit, and the next save would
+	 * revert it (flag 37).
+	 *
+	 * The refusal is checked BEFORE the picker opens, so the user is told now,
+	 * not after choosing a file. That is why the box opens the picker from
+	 * code rather than being a `<label for>`: a label opens it natively,
+	 * before any handler can refuse.
+	 *
+	 * `getElementById`, because `bind:this` is not in B3 (the
+	 * `incompleteDateTimes` precedent).
+	 */
+	function openEvidencePicker() {
+		if (!editable('implementation_evidence')) return;
+		actionError = null;
+		actionNotice = null;
+		const refusal = unsavedRefusal('uploading');
+		if (refusal !== null) {
+			fail(refusal);
+			return;
+		}
+		(document.getElementById('implementation_evidence') as HTMLInputElement | null)?.click();
+	}
+
+	function evidenceBoxKey(e: KeyboardEvent) {
+		if (e.key !== 'Enter' && e.key !== ' ') return;
+		e.preventDefault();
+		openEvidencePicker();
+	}
+
+	/**
+	 * The picker's choice. The input is emptied straight away, or choosing the
+	 * same file again, say after a failed upload, would fire no `change`.
+	 */
+	function evidencePicked(e: Event & { currentTarget: HTMLInputElement }) {
+		const file = e.currentTarget.files?.[0];
+		e.currentTarget.value = '';
+		if (file !== undefined) uploadEvidence(file);
+	}
+
+	/**
+	 * Without this, dropping a file on the box makes the browser leave the
+	 * page and open the file. So it runs even while the box is locked
+	 * (decision 108).
+	 */
+	function evidenceDragOver(e: DragEvent) {
+		e.preventDefault();
+	}
+
+	/**
+	 * A drop on the box. `preventDefault()` first and always, for the same
+	 * reason as above. Several files are refused rather than taking the first:
+	 * the order of dropped files is not the user's, so the one uploaded could
+	 * be the wrong one.
+	 */
+	function evidenceDropped(e: DragEvent) {
+		e.preventDefault();
+		if (!editable('implementation_evidence')) return;
+		const files = e.dataTransfer?.files;
+		if (files === undefined || files.length === 0) return;
+		if (files.length > 1) {
+			actionError = null;
+			actionNotice = null;
+			fail({ error: 'Only one file can be uploaded.' });
+			return;
+		}
+		uploadEvidence(files[0]);
+	}
+
+	/**
+	 * `POST /changecontrols/{ccID}/files/implementation_evidence`, one part
+	 * named `file`. `api.ts` sends a `FormData` with no `Content-Type`.
+	 *
+	 * The response is the whole record, re-read inside the transaction, so a
+	 * 200 is `setRecord()`, exactly like a save (decision 68's table): 409 →
+	 * pinned error and reload, because the record has left In Implementation;
+	 * anything else leaves the record alone. A 0 or 500 is safe to retry: if
+	 * the first attempt committed, the upsert replaces the file with the same
+	 * bytes.
+	 *
+	 * The refusals are checked again here, because a drop arrives without a
+	 * click.
+	 */
+	async function uploadEvidence(file: File) {
+		if (cc === null || !editable('implementation_evidence')) return;
+		actionError = null;
+		actionNotice = null;
+		const refusal = unsavedRefusal('uploading') ?? evidenceRefusal(file);
+		if (refusal !== null) {
+			fail(refusal);
+			return;
+		}
+
+		const body = new FormData();
+		body.append('file', file);
+		// Set before the first `await`, so the lock is on for the whole request.
+		uploading = file.name;
+		const mine = latest;
+		const result = await request<ChangeControlResponse>(
+			'POST',
+			`/changecontrols/${encodeURIComponent(cc.cc_id)}/files/implementation_evidence`,
+			body
+		);
+		uploading = null;
+		if (mine !== latest) return;
+
+		if (result.ok) {
+			setRecord(result.data);
+			actionNotice = `Uploaded ${formatDateTime(new Date().toISOString())}`;
+		} else {
+			fail(result.error, result.status === 409);
+			if (result.status === 409) load(ccId);
+		}
 	}
 
 	// ── Submitting a signed transition ──────────────────────────────────────
@@ -1377,10 +1537,11 @@
 	 * 10): every bar button refuses while dirty, and letting Cancel through
 	 * would need a hole in `sign()`'s backstop.
 	 *
-	 * One definition for three callers (decision 86's precedent): both gates
-	 * and `sign()`'s backstop. The verb names the action refused.
+	 * One definition for four callers (decision 86's precedent): both gates,
+	 * `sign()`'s backstop, and the evidence upload (decision 105). The verb
+	 * names the action refused.
 	 *
-	 * ⚠️ THE THIRD CHECK IS A BACKSTOP, NOT A LIVE BRANCH. `dirty` already
+	 * ⚠️ THE PARTIAL-DATE CHECK IS A BACKSTOP, NOT A LIVE BRANCH. `dirty` already
 	 * includes `incomplete`, and it is checked first, so a partial date draws
 	 * "Save your changes before …", never the date message (Lain, step 10).
 	 * The date message fires only when `incomplete` is stale: when the DOM
@@ -1392,6 +1553,7 @@
 	 */
 	function unsavedRefusal(verb: string): ErrorBody | null {
 		if (saving) return { error: 'A save is in progress. Try again in a moment.' };
+		if (uploading !== null) return { error: 'An upload is in progress. Try again in a moment.' };
 		if (dirty) return { error: `Save your changes before ${verb}.` };
 		const refusal = incompleteMessage(verb);
 		return refusal === null ? null : { error: refusal };
@@ -2503,13 +2665,16 @@
 			{/if}
 		</div>
 
-		<!-- Metadata only (decision 50). Step 12 swaps the empty box for the
-		     upload control when `editable('implementation_evidence')`. Step 14
-		     turns the file name into a download `<button>`, never an `<a href>`
-		     because a link cannot send the bearer (trap 4). The size and date
-		     text stay. `content_type` is not shown: the upload stores it as a
-		     constant, after checking that the bytes are a PDF. -->
+		<!-- The metadata line shows whenever a file exists (decision 50). The
+		     name is the STORED one, which `sanitizeFilename` may have changed
+		     from the name the user picked. Step 14 turns it into a download
+		     `<button>`, never an `<a href>`, because a link cannot send the
+		     bearer (trap 4). `content_type` is not shown: the upload stores it
+		     as a constant, after checking that the bytes are a PDF. -->
 		<div class="form-group">
+			<!-- The label deliberately points at nothing. `for` on the hidden
+			     file input would make a label click open the picker natively,
+			     past the dirty refusal (decision 104). -->
 			<!-- svelte-ignore a11y_label_has_associated_control -->
 			<label
 				>Implementation Evidence{#if required('implementation_evidence')} *{/if}</label
@@ -2520,22 +2685,54 @@
 						cc.implementation_evidence.file_size
 					)} · Uploaded {formatDateTime(cc.implementation_evidence.uploaded_on)}
 				</div>
-			{:else}
+			{/if}
+			{#if mayEdit('implementation_evidence')}
+				<!-- The owner in In Implementation (step 12). The prototype's box,
+				     with no Upload button, so choosing or dropping a file IS the
+				     upload (decision 104). The input is `hidden` and opened from
+				     code, after the refusals. One file, no `multiple`: the handler
+				     reads one part and REPLACES the stored file. `accept` only
+				     filters the picker; the server decides. `mayEdit`, not
+				     `editable`, so the box stays in place, greyed, while locked. -->
+				<input
+					type="file"
+					id="implementation_evidence"
+					accept=".pdf,application/pdf"
+					hidden
+					onchange={evidencePicked}
+				/>
+				<div
+					class="upload-box{editable('implementation_evidence') ? '' : ' disabled'}"
+					role="button"
+					tabindex={editable('implementation_evidence') ? 0 : -1}
+					aria-disabled={!editable('implementation_evidence')}
+					onclick={openEvidencePicker}
+					onkeydown={evidenceBoxKey}
+					ondragover={evidenceDragOver}
+					ondrop={evidenceDropped}
+				>
+					{#if uploading !== null}
+						Uploading {uploading}…
+					{:else}
+						<!-- "a file", not the prototype's "files": the field holds
+						     one (decision 107). -->
+						Click to upload or drag and drop a file<br />
+						PDF (Max 10MB)
+					{/if}
+				</div>
+				<!-- There is no delete endpoint, so replacing the file is the
+				     only correction there is. Said before the user uploads
+				     (decision 107). -->
+				{#if cc.implementation_evidence}
+					<div class="field-hint">Uploading another file replaces this one.</div>
+				{/if}
+				<div class="field-hint">
+					Upload logs, screenshots, test results, or other supporting evidence
+				</div>
+			{:else if !cc.implementation_evidence}
 				<div class="upload-box disabled">
 					No file uploaded<br />
 					PDF (Max 10MB)
-				</div>
-			{/if}
-			<!-- ⚠️ The label carries an asterisk from here on, because `mayEdit`
-			     is genuinely true for the owner in this state — `HandlerUploadFile`
-			     checks owner + In Implementation — and MANDATORY lists it for T6.
-			     `required()` stays computed, with no carve-out for step 12 to
-			     remember to remove. The box below it stays DISABLED until then, so
-			     the hint is what says the evidence is expected; without it the
-			     asterisk would point at something with no control. -->
-			{#if mayEdit('implementation_evidence')}
-				<div class="field-hint">
-					Upload logs, screenshots, test results, or other supporting evidence
 				</div>
 			{/if}
 		</div>

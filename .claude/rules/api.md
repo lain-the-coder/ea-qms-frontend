@@ -51,7 +51,7 @@ They match the wire format, narrow inside `{#if}`, and need no conversion.
 - Attach `Authorization: Bearer` from the auth store
 - **Never set `Content-Type` on a `FormData` body.** A multipart request needs a
   boundary string only the browser knows; setting the header by hand omits it and
-  the server cannot parse the body. The wrapper must branch on body type
+  the server cannot parse the body. `send()` branches on `body instanceof FormData`
 - On a **401 whose body is `Unauthorized`**: refresh **once**, retry **once**.
   A 401 or 400 from the refresh (`isTokenVerdict`) clears the store and runs
   `goto('/login')`. A network error or 500 from the refresh is returned, and
@@ -169,6 +169,46 @@ trap as the four in `SaveDraftRequest`.
 **It writes no audit rows, and that is correct.** BRD **SC-5** names the nine
 critical fields, and none of these five is among them. Expect no `audit_logs`
 row after an implementation save.
+
+### The evidence upload (blueprint A6.1)
+
+`POST …/files/implementation_evidence`, a `FormData` with **one** part named
+`file`. It goes through `request()`, so the token and the 401 retry apply, and
+re-sending the same `FormData` is safe.
+
+⚠️ **The response is the whole `ChangeControlResponse`.** Call `setRecord()`
+and never refetch, as after a save. That rebuilds every form object, so:
+- **Refuse while dirty** through `unsavedRefusal('uploading')`, **before the
+  picker opens**, and again at drop and send time. A lock alone cannot help,
+  because the edits were typed before the click.
+- **Lock while in flight** with `uploading`. It is its own flag only because
+  `saving` drives the Save button's label. `editable()`, `unsavedRefusal()` and
+  `save()` all read it.
+
+**One file, PDF only, and it REPLACES.** No `multiple`. `accept` only filters
+the picker. There is no delete endpoint, so a file can be replaced but never
+removed.
+
+**Which checks a file input can reach:**
+- **Size, extension and empty.** The client refuses these before sending, with
+  the Go's sentences, in the Go's order: `File must be 10 MB or smaller`,
+  `Only PDF files are accepted`, `File payload cannot be empty`. Otherwise the
+  whole file uploads for a certain 400, and over about 11 MB the failure may
+  arrive as status 0.
+- **Magic bytes** (`%PDF-` at byte 0). **The server alone decides these.** They
+  return the same sentence as the extension.
+- **409** once the record has left `In Implementation`: pinned, then reload.
+
+Everything else is unreachable from the UI: the path checks, the part checks,
+a blank filename (a dead check), a second size check (also dead), 403 and 404.
+**Every 400 precedes the 404, 403 and 409.**
+
+**The stored name may differ from the chosen one.** `sanitizeFilename` drops
+`'`, `` ` ``, `;`, `"` and control characters, and trims. Render the name from
+the response, never from the `File`.
+
+**Side effects:** `last_updated_on` and `last_updated_by_id` move on every
+upload, and **no audit row is written** (SC-5).
 
 ## Transitions
 

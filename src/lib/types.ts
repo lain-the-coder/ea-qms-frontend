@@ -422,7 +422,12 @@ export interface ChangeControlResponse {
 	/** The only optional field in this group. */
 	deviations_from_plan: string | null;
 	validation_performed: string | null;
-	/** Metadata only, `null` until a file is uploaded. Mandatory at T6. */
+	/**
+	 * Metadata only, `null` until a file is uploaded. Written only by
+	 * `POST …/files/implementation_evidence` (multipart, one part named `file`,
+	 * PDF ≤ 10 MB), which returns this whole record, with 200 rather than 201
+	 * because it cannot tell a create from a replace. Mandatory at T6.
+	 */
 	implementation_evidence: FileRef | null;
 
 	// Approvals — initiation — BRD 35–36
@@ -678,20 +683,6 @@ export interface SignatureItem {
 export interface SignatureListResponse {
 	signatures: SignatureItem[];
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Files
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * The spec defines this as its own schema with properties identical to
- * `FileRef`. Aliased rather than duplicated; if the two ever diverge, this
- * becomes its own interface.
- *
- * Upload is PDF only, 10 MB max, in a part named `file`, and returns 200 rather
- * than 201 because the endpoint cannot tell a create from a replace.
- */
-export type FileUploadResponse = FileRef;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Dashboard

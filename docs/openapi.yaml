@@ -898,16 +898,6 @@ components:
           type: array
           items: { $ref: "#/components/schemas/SignatureItem" }
 
-    # ---------- files ----------
-
-    FileUploadResponse:
-      type: object
-      properties:
-        file_name: { type: string }
-        file_size: { type: integer, format: int64 }
-        content_type: { type: string, example: application/pdf }
-        uploaded_on: { type: string, format: date-time }
-
     # ---------- dashboard ----------
 
     DashboardOverview:
@@ -1826,15 +1816,31 @@ paths:
         Do **not** set `Content-Type` by hand — the browser generates it with the
         boundary, and overriding it breaks parsing.
 
-        **PDF only, 10 MB maximum.** The type is verified by inspecting the
-        file's contents, not the extension or the declared content type, so a
-        renamed PNG is rejected.
+        **PDF only, 10 MB maximum** (10 × 1024 × 1024 bytes). **Two checks, both
+        required:** the filename must end in `.pdf` (any case), and the file's
+        first bytes must be `%PDF-`. So a renamed PNG is rejected, and so is a
+        genuine PDF named `report` or `report.txt`. Both failures return the same
+        sentence. The declared part `Content-Type` is ignored; the stored
+        `content_type` is always `application/pdf`.
 
         **One file per field — re-uploading replaces it.** There is no delete
         endpoint; upload a different file to change it.
 
-        The filename is sanitised before storage: path components stripped,
-        control characters and quotes removed, capped at 255 characters.
+        **The stored filename may differ from the one sent**, and the response
+        carries the stored one. In order: `\` becomes `/` and any directory is
+        stripped; control characters (U+0000–U+001F and U+007F only), `"`, `'`,
+        `` ` `` and `;` are removed; surrounding whitespace is trimmed; an empty
+        result, `.` or a bare `.pdf` becomes `evidence.pdf`; and a name over 255
+        **runes** is cut, keeping its extension. Other non-ASCII characters are
+        kept.
+
+        **Side effects:** the record's `last_updated_on` and
+        `last_updated_by_id` move on every upload. No audit row is written;
+        `uploaded_by_id` and `uploaded_on` on the attachment are the trail.
+
+        **Every 400 is checked before the transaction**, so it precedes the 404,
+        403 and 409: a bad file sent to a record that has left
+        `In Implementation`, or by a non-owner, gets the 400.
       parameters:
         - $ref: "#/components/parameters/ccID"
         - $ref: "#/components/parameters/fieldName"
@@ -1855,13 +1861,34 @@ paths:
           description: |
             Uploaded. **200, not 201** — the endpoint cannot tell whether it
             created or replaced.
+
+            Returns the **full change control**, re-read inside the transaction
+            through the same query `GET /changecontrols/{ccID}` uses, so
+            `implementation_evidence` already carries the file just stored.
+            Use it as the record, as after a save or a transition — do not
+            refetch.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/FileUploadResponse" }
+              schema: { $ref: "#/components/schemas/ChangeControlResponse" }
         "400":
           description: |
-            Not a PDF, over 10 MB, empty, missing the `file` part, not multipart,
-            or an unsupported `fieldName`.
+            In the handler's order, before the transaction:
+
+            | Cause | `error` |
+            |---|---|
+            | Request body over 11 MB | `File exceeds maximum allowed size of 10 MB` |
+            | Blank CC-ID | `CC-ID cannot be blank` |
+            | `fieldName` not `implementation_evidence` | `Field name in path parameter is not one of accepted values` |
+            | Not multipart | `Invalid multipart form payload` |
+            | No `file` part, or a part with an empty filename | `Missing file payload in request` |
+            | File over 10 MB | `File must be 10 MB or smaller` |
+            | Filename not ending in `.pdf` | `Only PDF files are accepted` |
+            | Empty file | `File payload cannot be empty` |
+            | Bytes not starting with `%PDF-` | `Only PDF files are accepted` |
+
+            The body limit is checked while the request is read, and the server
+            then closes the connection, so a client still sending may see a
+            network error rather than this 400.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }

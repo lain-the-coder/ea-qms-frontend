@@ -92,7 +92,7 @@ by the file upload endpoint.
 | 31 | `implementation_summary` | textarea | **T6** | 2000 | Not empty/whitespace. |
 | 32 | `deviations_from_plan` | textarea | — | 2000 | **Optional.** |
 | 33 | `validation_performed` | textarea | **T6** | 2000 | Not empty/whitespace. |
-| 34 | `implementation_evidence` | file | **T6** | 10 MB | **Mandatory at T6** — file must exist or submission is blocked. ⬥ **PDF only** (BRD BR-8.2.13 as amended in V1.2); type verified by inspecting file contents, not the extension or the declared content type. Single file only (replace on re-upload). |
+| 34 | `implementation_evidence` | file | **T6** | 10 MB | **Mandatory at T6** — file must exist or submission is blocked. ⬥ **PDF only** (BRD BR-8.2.13 as amended in V1.2); the name must end in `.pdf` **and** the contents must start with `%PDF-`; the declared content type is ignored. Single file only (replace on re-upload). |
 
 ---
 
@@ -344,8 +344,9 @@ from one action share one timestamp.**
     harder to read, not more complete.
 
 12. ⬥ **`implementation_evidence` is PDF only**, verified by inspecting the file's contents. The
-    extension is checked first only for a clearer error message; a renamed PNG passes that check
-    and fails on the magic bytes.
+    extension is checked first, and it is a real gate, not a nicety: both checks return the same
+    message, so a genuine PDF not named `.pdf` is rejected too. A renamed PNG passes the extension
+    check and fails on the magic bytes.
 
 13. ⬥ **Date and time fields accept only RFC 3339**, and only `null` clears them — an empty string
     is a parse error, unlike text fields where `""` normalises to NULL. The two `TIME` columns

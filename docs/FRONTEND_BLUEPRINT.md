@@ -554,11 +554,72 @@ Content-Type: multipart/form-data          ← let the browser set this
 **Do not set `Content-Type` by hand** — the browser generates it with a boundary
 string, and overriding it breaks parsing.
 
-**PDF only, 10 MB maximum.** The type is verified by inspecting the file's
-contents, so renaming a `.png` does not work. One file per field: re-uploading
-**replaces**, and there is no delete endpoint.
+**PDF only, 10 MB maximum** (`10 << 20` bytes, compared with `>`). **Two
+checks, both real gates:** the filename must end in `.pdf`, in any case, and
+the bytes must start with `%PDF-` (`http.DetectContentType`, in the handler).
+So a renamed `.png` fails, and so does a genuine PDF named `report.txt`. Both
+return `Only PDF files are accepted`. One file per field: re-uploading
+**replaces** it (an upsert on `(change_control_id, field_name)`), and there is
+no delete endpoint. **Once a file exists it can be replaced but never
+removed**, so the UI must say that an upload replaces.
 
-Owner only, `In Implementation` only.
+Owner only (by `change_owner_id`, with no role check, as in A7.6),
+`In Implementation` only.
+
+⚠️ **Every 400 is checked before the transaction opens**, so it precedes the
+404, 403 and 409. A bad file sent to a record that has moved on returns the
+400, not the 409. This is the same shape as A7.4's body checks. The full list
+and its order are in `openapi.yaml`.
+
+**Which checks a file input can reach.** Of the handler's checks, only four:
+- the size
+- the extension
+- an empty file
+- the magic bytes
+
+Everything else is fixed by how the client builds the request:
+- the path
+- the part name
+- multipart itself
+
+Two checks can never fire from any client:
+- **The blank-filename check.** Go stores a part with an empty filename as a
+  plain form value, so it reports `Missing file payload in request` first.
+- **The second size check.** `FileHeader.Size` is the byte count Go actually
+  read, so it is the same number as the first.
+
+The client applies the first three before sending, with the Go's sentences.
+Otherwise it uploads the whole file only to draw a certain 400. Over about
+11 MB, `MaxBytesReader` closes the connection while the browser is still
+sending, so the failure may arrive as status 0 rather than the 400. That is
+reasoned from `net/http`, not observed. The magic-byte check is left to the
+server.
+
+**The stored filename may differ from the one chosen.** `sanitizeFilename`, in
+order:
+1. It turns `\` into `/` and strips any directory.
+2. It drops C0 controls, DEL, `"`, `'`, `` ` `` and `;`.
+3. It trims.
+4. An empty result, `.` or `.pdf` becomes `evidence.pdf`.
+5. It caps the name at 255 runes, keeping the extension.
+
+The extension check reads the raw name first. From Windows, `O'Brien; v2.pdf`
+is stored as `OBrien v2.pdf`. Other non-ASCII characters, bidi overrides
+included, are kept. The response and the screen show the stored name.
+
+**The response is the whole record** (`ChangeControlResponse`), re-read inside
+the transaction like A7.7's. So `setRecord()` it, and never refetch. Because
+that rebuilds every form object, **the upload refuses while the form is dirty**
+and locks the form while in flight, as a save does.
+
+**Side effects:**
+- `last_updated_on` and `last_updated_by_id` move on every upload.
+- **No audit row is written**, which is correct under SC-5.
+  `file_attachments.uploaded_by_id` and `uploaded_on` are the trail.
+
+**A retry is safe:** if a status 0 or 500 hid a commit, the upsert replaces the
+file with the same bytes. Unlike Create (flag 30), repeating an upload creates
+nothing new.
 
 ### A6.2 Download cannot be a hyperlink
 
@@ -1636,6 +1697,12 @@ message that points nowhere near the cause.
 This is the single most common file-upload bug. The wrapper must branch on the
 body type rather than setting the header unconditionally.
 
+**Built at step 12.** `send()` branches on `body instanceof FormData`. The
+upload goes through `request()` like every other call, so it gets the token and
+the 401 refresh-and-retry. The retry passes the same `FormData` a second time,
+which is safe: `fetch` serialises it afresh on each call and does not consume
+it the way it consumes a stream.
+
 ## B8. `auth.svelte.ts` — the store
 
 `$state` in a `.svelte.ts` module, holding the current user and access token:
@@ -1695,7 +1762,7 @@ end to end, and do not merge two because they feel contiguous.
 | 9 | **T2 submit + the e-signature modal** — written once, inline, and opened with a meaning and a sender, so steps 11 and 13 reuse it. Also: the date rules in the submit gate, a requirements dialog for every `issues` body, and the bar's error ordering (flag 42) | The first transition end to end, the save-then-submit gate, and the modal's three outcome paths: a rejected signature, a transport failure, and a failure about the record |
 | 10 | **T3 cancel** — the step-9 signature modal, which asks for the reason when the meaning is `Cancelled`. Amended at step 10: not a third modal | The one transition that collects **a reason *and* credentials together**, and where a body error belongs when the field is inside the modal (A7.8) |
 | 11 | **Approver flow** — the queue (`/approvals`: the list with `assigned=me`, one gate at a time), and the implementation decision (T4/T5) through the step-9 modal, with the meaning chosen by the decision. Also: a navigation guard for the gate buffers, separate from `dirty` | The second role, the first approval gate, and a leftover rejection on screen |
-| 12 | **File upload** — the evidence control. Narrowed at step 8: the save half moved to 8b | `FormData`, the part named `file`, and the PDF/size limits |
+| 12 | **File upload** — the evidence control: the prototype's box, where choosing or dropping one file is the upload, with no Upload button. Narrowed at step 8: the save half moved to 8b. Amended at step 12: the response is the whole record, so the upload refuses while the form is dirty and locks it while in flight | `FormData`, the part named `file`, the PDF/size limits, and the stored filename differing from the chosen one |
 | 13 | **T6 + the final decision (T7/T8)**. The signature history panel moved to 7a | The remaining gates, and the full state machine exercised |
 | 14 | **File download** | Blob handling, `Content-Disposition` |
 | 15 | **Admin settings — user management** | **Not a variation of anything else:** inline edit rows, two separate endpoints for the pencil and the toggle, and a 409 carrying `blocked_cc_ids` |
@@ -1785,7 +1852,7 @@ These were open in V0.9 and are now answered:
 
 | Question | Answer |
 |---|---|
-| Exact JSON field names and shapes | `openapi.yaml` — 46 schemas |
+| Exact JSON field names and shapes | `openapi.yaml` |
 | The 400 validation payload | `{error, issues[]}` — see A8.1 |
 | Dashboard response shape | Four blocks — see A10 and the spec |
 | API base URL handling | `PUBLIC_API_URL=http://localhost:1304/api` — see **B11** |

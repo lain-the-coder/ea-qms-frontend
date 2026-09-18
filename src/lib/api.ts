@@ -41,8 +41,14 @@ type Method = 'GET' | 'POST' | 'PUT';
  * One fetch. It attaches a bearer header only when given a token, and it
  * knows nothing about 401s.
  *
- * JSON bodies only. The `FormData` branch, which must NOT set
- * `Content-Type`, arrives with file upload at step 12. B7.
+ * ⚠️ A `FormData` body (the evidence upload) gets NO `Content-Type`. The
+ * browser writes `multipart/form-data; boundary=…` itself, and only it knows
+ * the boundary it generated. Set by hand, the header lacks it and the server
+ * cannot split the parts (B7). Any other body is JSON.
+ *
+ * `request()`'s 401 retry passes the same `FormData` here a second time.
+ * That is safe: `fetch` serialises a `FormData` afresh on every call, so it
+ * is not consumed the way a stream body would be.
  */
 async function send(
 	method: Method,
@@ -50,14 +56,15 @@ async function send(
 	body: unknown,
 	token: string | null
 ): Promise<Response | null> {
+	const multipart = body instanceof FormData;
 	const headers: Record<string, string> = {};
-	if (body !== undefined) headers['Content-Type'] = 'application/json';
+	if (body !== undefined && !multipart) headers['Content-Type'] = 'application/json';
 	if (token !== null) headers['Authorization'] = `Bearer ${token}`;
 	try {
 		return await fetch(PUBLIC_API_URL + path, {
 			method,
 			headers,
-			body: body === undefined ? undefined : JSON.stringify(body)
+			body: multipart ? body : body === undefined ? undefined : JSON.stringify(body)
 		});
 	} catch {
 		// fetch rejects only when no response arrived at all.

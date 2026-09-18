@@ -183,10 +183,19 @@ This does not license invention. The test that decides it:
 | | |
 |---|---|
 | **Untrue** — cut it | The build cannot ever do what the copy says. "You will be notified" is the case: Phase 1 has no SMTP, so the notification never arrives. Drop the sentence, keep the rest (flag 46, decisions 34 and 43) |
-| **Incomplete** — keep it | The build cannot do it *yet*, and a later step will. The Implementation Evidence hint is the case: the upload arrives at step 12, and the surrounding flow is visibly scaffolded, so it reads as unfinished rather than as a lie |
+| **Incomplete** — keep it | The build cannot do it *yet*, and a later step will. The Implementation Evidence hint was the case: the upload arrived at step 12, and until then the surrounding flow was visibly scaffolded, so it read as unfinished rather than as a lie |
 
 **Incomplete, not untrue.** Ask which one before dropping or keeping copy for a
 feature that is not built.
+
+⚠️ **The evidence upload box opens its picker from code, never through
+`<label for>`.** A label opens a file picker natively, before any handler can
+refuse, which gets past the dirty refusal. The box is the prototype's
+`.upload-box` with `role="button"`, `tabindex` and Enter/Space. It opens the
+hidden `<input type="file">` through `getElementById().click()`, because
+`bind:this` is not in B3. Its `dragover` and `drop` always call
+`preventDefault()`, even while locked: an unhandled drop navigates the tab to
+the file.
 
 ## Enum values
 
@@ -263,6 +272,11 @@ The guard reads it, and the bar does not.
 - **While either is open, `editable()` locks every control** (`&& dialog === null`),
   and `save()` and every submit handler return. The overlay blocks the pointer
   but not Tab.
+- **`editable()`'s locks:** `saving`, `uploading` and `dialog`. Any request
+  whose response goes through `setRecord()` needs one, because it rebuilds every
+  form object. **The upload also refuses while dirty**, through
+  `unsavedRefusal('uploading')`, because edits typed *before* the click would be
+  discarded, and a lock cannot protect those (api.md, "The evidence upload").
 - **No Escape-to-close and no focus management** (flag 52). No prototype has
   either. Two modal blocks now serve four uses (T2, T3, and both gates to come),
   so someone should decide it deliberately.
