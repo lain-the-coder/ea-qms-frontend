@@ -231,13 +231,37 @@ a T2/T6 400 does not always carry `issues`. The modal refuses both blanks
 before sending.
 
 **The signature is checked last** in all five (A7.4), so the modal should only
-open once the client-side checks pass. ⚠️ **For T2 those checks include the
-business-day rules**, which the server checks in the same pass as presence:
-- **UTC dates only**, with the boundary computed at click time.
-- The string comparison `value < boundary`.
-- The Go's own sentences, word for word.
+open once the client-side checks pass. ⚠️ **T2 and T6 both have a date rule the
+server checks in the same pass as presence**, so the gate mirrors both:
 
-`min` on the date inputs is an affordance, never the gate (blueprint A5.3).
+| | T2, in `Initiated` | T6, in `In Implementation` |
+|---|---|---|
+| Rule | `proposed_implementation_date` ≥ 2 business days, `target_closure_date` ≥ 10 | `actual_implementation_date` **not after today** |
+| Comparison | `value < earliestSubmitDate(n)` | `value > todayUTC()` — Go is `After(today)`, so **today passes**; never `>=` |
+| Sentence | `X must be at least N business days from today` | `Actual Implementation Date cannot be in the future` |
+
+- **UTC dates only**, from one `utcMidnight()`, computed at click time and never
+  cached. ⚠️ **The trap runs both ways:** a local-date boundary is too *strict*
+  for T2 and too *lenient* for T6, and lenient is worse — it passes a date the
+  server rejects, after the password has been collected.
+- The rules only fire on a **present** value, as in the Go, so a missing date is
+  never also reported as a bad one.
+- **Neither save checks a date rule.** The implementation save accepts any date
+  (drafting Monday for Wednesday's work), so a stored future date is a legitimate
+  thing to find on screen.
+
+⚠️ **`min` and `max` on the date inputs are affordances, never the gate — and
+they fail in opposite directions.** A stale `min` (step 9) only ever offers too
+many days, and the gate refuses with the server's sentence. A stale `max` (T6)
+**refuses a date the server accepts**, silently, with no message. Both go stale
+the same way: the attribute re-evaluates on state changes, never on the clock.
+`max` stays because it blocks the picker and not the keyboard — the date can
+still be typed, bound, saved and submitted — and because any load or save
+response clears it. Flag 62.
+
+**T2's and T6's issue ORDER differs from the Go's, and that is accepted.** The Go
+lists Implementation Evidence first; `MANDATORY` has its own order. The items are
+the same and nobody sees both refusals at once. Do not "fix" it.
 
 ⚠️ **Never trim the password.** The Go trims the email and not the password.
 The prototypes trim both.

@@ -614,26 +614,46 @@
 	};
 
 	/**
+	 * Midnight UTC today, as the server computes its `today`:
+	 * `time.Now().UTC()` truncated to the day.
+	 *
+	 * ⚠️ UTC THROUGHOUT, AND THE TRAP RUNS BOTH WAYS. Between 00:00 and 04:00
+	 * in Dubai the LOCAL date is a day AHEAD of UTC, so a local-date version
+	 * would be
+	 * - **stricter** than the server for T2's `min` boundaries (step 9), and
+	 * - **more lenient** for T6's future-date rule (step 13a), which is the
+	 *   worse direction: it would pass a date the server rejects, after the
+	 *   password has been collected.
+	 *
+	 * One function so the rule is stated once. Only UTC getters and setters
+	 * are used, so this is not A5.5's `new Date()` trap, which is about
+	 * reading a stored DATE in local time.
+	 *
+	 * Computed at every call, never cached, so a page left open overnight
+	 * still gates on today. A device clock that is wrong near midnight UTC can
+	 * still make the client briefly stricter or looser than the server. The
+	 * server is authoritative, and its clock is not readable here (`Date` is
+	 * not a CORS-exposed header).
+	 */
+	function utcMidnight(): Date {
+		const now = new Date();
+		return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+	}
+
+	// Today as `YYYY-MM-DD`, for T6's rule and for the `max` affordance. The
+	// same string shape the form holds a DATE in, so both compare lexically.
+	function todayUTC(): string {
+		return utcMidnight().toISOString().slice(0, 10);
+	}
+
+	/**
 	 * The earliest date, as `YYYY-MM-DD`, that passes a business-day rule.
 	 * Mirrors the Go's `businessDaysFrom` line for line: step one day, then
 	 * step over Saturday and Sunday. `getUTCDay` numbers days as Go's
 	 * `time.Weekday` does, 0 Sunday and 6 Saturday.
-	 *
-	 * ⚠️ UTC throughout. The server's `today` is `time.Now().UTC()` truncated
-	 * to midnight. Between 00:00 and 04:00 in Dubai the LOCAL date is a day
-	 * ahead, so a local-date version would be stricter than the server for
-	 * four hours a night. Only UTC getters and setters are used, so this is
-	 * not A5.5's `new Date()` trap, which is about reading a DATE locally.
-	 *
-	 * Computed at every call, never cached, so a page left open overnight
-	 * still gates on today's boundary. A device clock that is wrong near
-	 * midnight UTC can still make the client briefly stricter or looser than
-	 * the server. The server is authoritative, and its clock is not readable
-	 * here (`Date` is not a CORS-exposed header).
 	 */
 	function earliestSubmitDate(businessDays: number): string {
-		const now = new Date();
-		const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+		const d = utcMidnight();
 		for (let i = 0; i < businessDays; i++) {
 			d.setUTCDate(d.getUTCDate() + 1);
 			while (d.getUTCDay() === 6 || d.getUTCDay() === 0) d.setUTCDate(d.getUTCDate() + 1);
@@ -655,6 +675,32 @@
 	function minDate(field: EditableField): string | undefined {
 		const days = BUSINESS_DAYS[field];
 		return days !== undefined && mayEdit(field) ? earliestSubmitDate(days) : undefined;
+	}
+
+	/**
+	 * `max` on `actual_implementation_date`, so the picker greys out days T6
+	 * will refuse (A5.4). An affordance only: the gate compares strings in
+	 * `submitGate()` and never reads `validity.rangeOverflow`.
+	 *
+	 * ⚠️ IT GOES STALE IN THE STRICT DIRECTION, WHICH `min` NEVER DOES (flag
+	 * 62). Svelte re-evaluates it when `cc` or the permission inputs change,
+	 * never when the clock does. A page left open past midnight UTC therefore
+	 * greys out today, which the server accepts — the gate cannot rescue that,
+	 * because there is nothing to refuse. The user sees a picker that will not
+	 * offer today and no message saying why.
+	 *
+	 * What makes it survivable, and why it is still here:
+	 * - `max` blocks the PICKER, not the keyboard. The date can still be
+	 *   typed, it still binds, it still saves, and the gate still passes it —
+	 *   the same asymmetry step 9's check 2 found with `min`.
+	 * - Any load, save or upload response re-evaluates it.
+	 * - `global.css` has no `:invalid` rule, so nothing turns red.
+	 *
+	 * Only one field has a maximum, so this takes no argument: a `field`
+	 * parameter would have to be compared against the one name it accepts.
+	 */
+	function maxImplementationDate(): string | undefined {
+		return mayEdit('actual_implementation_date') ? todayUTC() : undefined;
 	}
 
 	/**
@@ -1174,7 +1220,7 @@
 	 * The same definition of "changed" as the saves: `changes()` against the
 	 * builder that seeded the buffer. So a leftover rejection's pre-filled
 	 * values read false until the approver actually types, and a 200 clears
-	 * it by rebuilding the buffer. One term per gate; step 13 adds nothing.
+	 * it by rebuilding the buffer. One term per gate; step 13b adds nothing.
 	 */
 	const unsubmitted = $derived(
 		cc !== null &&
@@ -1514,8 +1560,9 @@
 	 *   after 8a  2 uses   the two Submit Decisions
 	 *   after 8b  3 uses   + Submit for Final Approval
 	 *   step 11   2 uses   the implementation gate's went
-	 *   step 13   0 uses   the final gate's and Submit for Final Approval's go,
-	 *                      and this declaration and both comments go with them
+	 *   step 13a  1 use    Submit for Final Approval's went
+	 *   step 13b  0 uses   the final gate's goes, and this declaration and both
+	 *                      comments go with it
 	 *
 	 * Step 9 added none: T2's Submit arrived already wired to the modal.
 	 *
@@ -1625,7 +1672,8 @@
 		// so a page left open overnight gates on today. The sentence is the
 		// Go's, word for word.
 		//
-		// T6's rule ("cannot be in the future") joins here at step 13 (flag 48).
+		// T6's rule joined at step 13a (flag 48, now closed), as a second arm
+		// rather than a branch — the two states share the array, not the rules.
 		const rules: string[] = [];
 		if (record.current_state === 'Initiated') {
 			for (const field of Object.keys(BUSINESS_DAYS) as EditableField[]) {
@@ -1634,6 +1682,26 @@
 				if (value !== '' && value < earliestSubmitDate(days)) {
 					rules.push(`${FIELD_LABELS[field]} must be at least ${days} business days from today`);
 				}
+			}
+		}
+
+		// ⚠️ T6's rule: the date may be today, but not later. The Go is
+		// `cc.ActualImplementationDate.After(today)` with `today` truncated to
+		// midnight UTC, so `>` on `YYYY-MM-DD` is `After` and TODAY PASSES. Do
+		// not write `>=`.
+		//
+		// The save accepts any date (A5.4) — a user may draft on Monday for work
+		// scheduled Wednesday — so this is the only place the rule exists, and a
+		// stored future date is a legitimate thing to find on screen.
+		//
+		// Only for a present date, as in the Go, so a missing one is never also
+		// reported as a future one. The label is interpolated rather than
+		// hard-coded, so both halves of the sentence come from one place; the
+		// result is byte-identical to the Go's literal.
+		if (record.current_state === 'In Implementation') {
+			const value = values['actual_implementation_date'] ?? '';
+			if (value !== '' && value > todayUTC()) {
+				rules.push(`${FIELD_LABELS.actual_implementation_date} cannot be in the future`);
 			}
 		}
 
@@ -1674,7 +1742,7 @@
 	 * ⚠️ NOT one shared handler. The gate CHECKS are shared, in `submitGate()`
 	 * above, because they are the same checks. What follows them is not: the
 	 * implementation gate posts T4/T5 at step 11 and the final gate posts T7/T8
-	 * at step 13, with different endpoints, different meanings and different
+	 * at step 13b, with different endpoints, different meanings and different
 	 * bodies. One handler would have to be split by whichever step came first,
 	 * and it would hold a single `SIGNATURE_NOT_BUILT` reference that neither
 	 * step could remove on its own — which is exactly what flag 45's count
@@ -1683,7 +1751,7 @@
 	 * Both are synchronous up to the modal: no request, no `await`, so no
 	 * in-flight window. Each opens `openEsig()` with the meaning chosen from the
 	 * decision and `send` built from a SNAPSHOT of the buffer, so what the modal
-	 * shows is exactly what is signed (A7.5). The final gate is wired at step 13.
+	 * shows is exactly what is signed (A7.5). The final gate is wired at 13b.
 	 */
 
 	// The meaning is per TRANSITION, not per endpoint (A7.5): one endpoint, two
@@ -1733,21 +1801,34 @@
 	}
 
 	/**
-	 * T6, the owner's submit out of `In Implementation`. Its own handler for
-	 * the same reason as the two above: step 13 wires this one and step 11 does
-	 * not, so a shared handler would hold a `SIGNATURE_NOT_BUILT` reference
-	 * neither step could remove alone (flag 45).
+	 * T6, the owner's submit out of `In Implementation`. The gate, then the
+	 * modal — T2's shape exactly, because the two handlers do the same thing:
+	 * both carry credentials alone, and both validate the STORED row.
 	 *
-	 * ⚠️ This is the gate that matters most. T6 carries no field values and
-	 * silently ignores any it is sent, so `dirty` — checked inside
-	 * `submitGate()` — is the only thing standing between an owner and
-	 * submitting a form whose edits were never saved (A2).
+	 * ⚠️ T6 carries no field values and silently ignores any it is sent, so
+	 * `dirty` — refused inside `submitGate()` — is the only thing standing
+	 * between an owner and submitting a form whose edits were never saved (A2).
+	 *
+	 * The meaning is a constant, one per transition. Only the two DECISION
+	 * endpoints need a `Record<Decision, …>`, because each carries two.
+	 *
+	 * Still its own handler rather than shared with T2: the endpoints and the
+	 * meanings differ, and `submitGate()` already holds everything the two have
+	 * in common.
 	 */
 	function submitForFinalApproval() {
-		if (implForm === null || dialog !== null) return;
+		if (cc === null || implForm === null || dialog !== null) return;
 		actionError = null;
 		actionNotice = null;
-		fail(submitGate(implForm) ?? SIGNATURE_NOT_BUILT);
+		const refusal = submitGate(implForm);
+		if (refusal !== null) {
+			fail(refusal);
+			return;
+		}
+		const path = `/changecontrols/${encodeURIComponent(cc.cc_id)}/submit-final`;
+		openEsig('Submitted for Final Approval', (credentials) =>
+			request<ChangeControlResponse>('POST', path, credentials)
+		);
 	}
 
 	/**
@@ -1778,7 +1859,7 @@
 	 * refusal, then the signature modal.
 	 *
 	 * The reason is typed INSIDE the modal, so it cannot be snapshotted at open
-	 * time the way steps 11 and 13 snapshot their buffers. `send` reads
+	 * time the way steps 11 and 13b snapshot their buffers. `send` reads
 	 * `esigReason` when `sign()` calls it instead. That is the same guarantee:
 	 * `sign()` has just checked the reason and set `signing`, which disables
 	 * the textarea, and the body is built before `request()`'s first `await`.
@@ -1814,7 +1895,8 @@
 	 * transition.
 	 * - `meaning` is shown to the signer (A7.5). Typed as `SignatureMeaning`,
 	 *   so a mistyped meaning fails `bun run check` and the ASCII hyphens
-	 *   exist only in types.ts. Steps 11 and 13 pick it from the decision.
+	 *   exist only in types.ts. Steps 11 and 13b pick it from the decision;
+	 *   T2, T3 and T6 each have one constant meaning.
 	 * - `send` posts the transition with the credentials. The caller builds it,
 	 *   so the endpoint and any fields travel with the meaning they belong to.
 	 * - T3 is this modal too, not a kind of its own (step 10, flag 49). When the
@@ -2581,10 +2663,14 @@
 				<label for="actual_implementation_date"
 					>Actual Implementation Date{#if required('actual_implementation_date')} *{/if}</label
 				>
+				<!-- `max` greys out the days T6 refuses (A5.4). An affordance, not
+				     the gate, and the one attribute in this build that goes stale
+				     STRICTER than the server — flag 62, on `maxImplementationDate`. -->
 				<input
 					type="date"
 					id="actual_implementation_date"
 					class="form-control"
+					max={maxImplementationDate()}
 					disabled={!editable('actual_implementation_date')}
 					oninput={recheckDateTimes}
 					onkeyup={recheckDateTimes}

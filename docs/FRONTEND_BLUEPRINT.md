@@ -509,6 +509,29 @@ draft on Monday for work scheduled Wednesday.
 
 **Disable future dates in the picker** so the rule is never hit.
 
+The Go is `cc.ActualImplementationDate.After(today)`, with `today` truncated to
+midnight UTC and the sentence collected into the same `issues` array as the
+presence checks, **last**: `Actual Implementation Date cannot be in the future`.
+
+**The client mirror (step 13a)**, following A5.3's shape:
+- **The gate** compares the stored `YYYY-MM-DD` against `todayUTC()` with `>`,
+  computed at click time, never cached. `After` is strict, so **today itself
+  passes** — never `>=`. Only a present date is tested, so a missing one is not
+  reported twice. The sentence is the Go's, word for word.
+- ⚠️ **UTC only, and the trap runs the OPPOSITE way to A5.3's.** Between 00:00
+  and 04:00 in Dubai the local date is a day *ahead* of UTC, so a local-date
+  version would **allow** a date the server rejects. A5.3's equivalent mistake is
+  merely strict; this one is lenient, which is worse — it collects a password for
+  a submission that is going to 400.
+- **`max` on the input** greys out the days T6 refuses. An affordance, not the
+  gate. ⚠️ **Unlike `min`, a stale `max` is STRICTER than the server:** a page
+  left open past midnight UTC refuses today in the picker although the server
+  accepts it, with nothing on screen explaining why, and the gate cannot rescue
+  it because there is nothing to refuse. It is kept because `max` blocks the
+  picker and not the keyboard — the date can still be typed, and it then binds,
+  saves and submits — and because any load, save or upload response clears it.
+  Recorded as a flag rather than absorbed.
+
 ### A5.5 Display: slice dates, format instants
 
 | Column type | Fields | Display |
@@ -865,6 +888,15 @@ shape as the server, so both open the same dialog.
 
 **Known cost:** once the dialog is dismissed, nothing marks a date that is present
 but too early. Errors beside the field (A8.2's 400 row) would fix it.
+
+**The order of the items differs from the server's, and that is accepted (step
+13a).** At T6 the Go lists Implementation Evidence first, then the four fields;
+the client lists them in `MANDATORY`'s order, with Evidence last. Both then put
+the date sentence after the labels. **The same items are listed either way, and
+nobody sees both refusals at once** — the client's gate is what stops the request,
+so the server's list is only reachable from Postman. Reordering either side to
+match the other would pin the client to the handler's statement order, which is
+not part of the contract. Do not raise it again as a defect.
 
 ### A8.2 What each status means for the UI
 
@@ -1735,10 +1767,11 @@ express the Security Matrix.
 
 ## B9. Build order
 
-Nineteen steps: the seventeen numbered ones, with step 7 split into 7a–7d and
-step 8 into 8a–8b, plus 7a+ and 7d+. Amended at 7d, which added 7d+, and at
-step 8, which split it. **A split does not change the count** — 7a–7d are still
-step 7 and 8a–8b are still step 8; only the two `+` steps are additions, which
+Nineteen steps: the seventeen numbered ones, with step 7 split into 7a–7d, step 8
+into 8a–8b and step 13 into 13a–13b, plus 7a+ and 7d+. Amended at 7d, which added
+7d+, at step 8, which split it, and at step 13, which split it. **A split does not
+change the count** — 7a–7d are still step 7, 8a–8b are still step 8 and 13a–13b
+are still step 13; only the two `+` steps are additions, which
 is why the table has more rows than the number says. Each step is independently
 verifiable against the running API — do not start one until the previous works
 end to end, and do not merge two because they feel contiguous.
@@ -1763,7 +1796,8 @@ end to end, and do not merge two because they feel contiguous.
 | 10 | **T3 cancel** — the step-9 signature modal, which asks for the reason when the meaning is `Cancelled`. Amended at step 10: not a third modal | The one transition that collects **a reason *and* credentials together**, and where a body error belongs when the field is inside the modal (A7.8) |
 | 11 | **Approver flow** — the queue (`/approvals`: the list with `assigned=me`, one gate at a time), and the implementation decision (T4/T5) through the step-9 modal, with the meaning chosen by the decision. Also: a navigation guard for the gate buffers, separate from `dirty` | The second role, the first approval gate, and a leftover rejection on screen |
 | 12 | **File upload** — the evidence control: the prototype's box, where choosing or dropping one file is the upload, with no Upload button. Narrowed at step 8: the save half moved to 8b. Amended at step 12: the response is the whole record, so the upload refuses while the form is dirty and locks it while in flight | `FormData`, the part named `file`, the PDF/size limits, and the stored filename differing from the chosen one |
-| 13 | **T6 + the final decision (T7/T8)**. The signature history panel moved to 7a | The remaining gates, and the full state machine exercised |
+| **13a** | **T6** — `In Implementation` → `Pending Final Approval` through the step-9 modal, with one constant meaning. Also: the future-date rule in the submit gate and `max` on the date input. Split from step 13 at step 13a | The owner's second submit, the gate's second date rule, and a record leaving the state that owns the upload — the box and the editable fields go with it |
+| **13b** | **The final decision (T7/T8)** through the same modal, with the meaning chosen by the decision, **and the full loop** on one record: T6 → T8 reject → `In Implementation` → resubmit → T7 approve → `Closed`. The signature history panel moved to 7a | The last gate, a rejection returning a record to an earlier state, and the whole state machine exercised end to end |
 | 14 | **File download** | Blob handling, `Content-Disposition` |
 | 15 | **Admin settings — user management** | **Not a variation of anything else:** inline edit rows, two separate endpoints for the pencil and the toggle, and a 409 carrying `blocked_cc_ids` |
 | 16 | **Activity-gated proactive refresh** | The gating, not just the timer — see A1.2 |
@@ -1834,6 +1868,21 @@ So the line falls between them:
 
 Step 12 keeps the upload alone, which is the genuinely different mechanism
 (`FormData`) and deserves its own step either way.
+
+**Step 13 is split into 13a and 13b**, for a reason that is about the build
+rather than the code: **each session starts fresh**, so a verified checkpoint
+between two transitions is worth more than doing both at once. As one step it was
+T6, T7, T8 and a five-transition loop — and a loop that fails halfway leaves no
+way to tell which transition was wrong.
+
+- **13a** is T6 alone, plus the two things only T6 needs: the future-date rule in
+  the gate (A5.4) and `max` on the input.
+- **13b** is T7/T8, which need a `Record<Decision, …>` meaning as step 11 did,
+  **and the full loop**, which cannot run until both exist.
+
+13a spends exactly one record — only its success check transitions anything —
+so count `In Implementation` before starting, and leave 13b a record to run the
+loop from.
 
 **Upload cannot come earlier than step 12**, because the only upload field is
 `implementation_evidence` and it is writable only in `In Implementation` — a state
