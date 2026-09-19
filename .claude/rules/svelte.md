@@ -282,8 +282,9 @@ The guard reads it, and the bar does not.
   so someone should decide it deliberately.
 - **Known cost (flag 51):** after the requirements dialog is dismissed, nothing
   marks a date that is present but too early.
-- **Steps 11 and 13 choose the meaning at open time** and build `send` from a
-  **snapshot** of their buffer, so what is shown is what is signed.
+- **Both approver gates (steps 11 and 13b) chose the meaning at open time**
+  and build `send` from a **snapshot** of their buffer, so what is shown is
+  what is signed.
 - **`closeDialog()` clears the email and password on every way out**, including
   `load()`.
 

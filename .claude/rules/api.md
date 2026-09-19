@@ -307,9 +307,9 @@ message (forbidden) or Go's whitespace table (rejected), and routing by
 transition misroutes the email case. **No mechanism: the field 400 shows in the
 modal, verbatim.**
 
-⚠️ **T4/T5: the meaning follows the decision**, from a
-`Record<Decision, SignatureMeaning>`, and `send` is built from a snapshot of the
-buffer taken at click time.
+⚠️ **T4/T5 and T7/T8: the meaning follows the decision**, from a
+`Record<Decision, SignatureMeaning>` per gate, and `send` is built from a
+snapshot of the buffer taken at click time.
 
 ⚠️ **T3 is the signature modal, not a third one.** `openEsig('Cancelled', send)`.
 `cancelling = meaning === 'Cancelled'` adds the reason field, the prototype's

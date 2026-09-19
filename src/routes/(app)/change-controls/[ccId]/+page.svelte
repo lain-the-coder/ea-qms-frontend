@@ -1220,7 +1220,7 @@
 	 * The same definition of "changed" as the saves: `changes()` against the
 	 * builder that seeded the buffer. So a leftover rejection's pre-filled
 	 * values read false until the approver actually types, and a 200 clears
-	 * it by rebuilding the buffer. One term per gate; step 13b adds nothing.
+	 * it by rebuilding the buffer. One term per gate.
 	 */
 	const unsubmitted = $derived(
 		cc !== null &&
@@ -1537,41 +1537,6 @@
 	// ── Submitting a signed transition ──────────────────────────────────────
 
 	/**
-	 * ⚠️ SCAFFOLDING — THE E-SIGNATURE MODAL'S INSERTION POINT.
-	 *
-	 * Every caller reaches this line only once `submitGate()` has passed, which
-	 * is exactly the moment `openEsig(meaning, send)` should open. Replace the
-	 * `fail(…)` call; do not add beside it. `submitForImplApproval()` below is
-	 * the worked example.
-	 *
-	 * This comment sits on the constant rather than at a call site so that
-	 * deleting one caller cannot strand it. `tsconfig` has no `noUnusedLocals`,
-	 * so nothing in the build will notice a leftover: **flag 45 tracks the
-	 * number of USES**.
-	 *
-	 * ⚠️ **The counting command lives in flag 45, deliberately NOT here.** It
-	 * matches on the nullish coalescing that precedes each use, so writing it
-	 * into this file would make the comment match its own pattern and inflate
-	 * the count by one. That has now happened twice — first with a bare search
-	 * for the name, which matches these comments, and then with the command
-	 * itself. **A self-counting check is wrong every time.** Keep the pattern
-	 * out of this file and read it from PROGRESS.md.
-	 *
-	 *   after 8a  2 uses   the two Submit Decisions
-	 *   after 8b  3 uses   + Submit for Final Approval
-	 *   step 11   2 uses   the implementation gate's went
-	 *   step 13a  1 use    Submit for Final Approval's went
-	 *   step 13b  0 uses   the final gate's goes, and this declaration and both
-	 *                      comments go with it
-	 *
-	 * Step 9 added none: T2's Submit arrived already wired to the modal.
-	 *
-	 * An `ErrorBody`, not a string, since `submitGate()` returns one. That
-	 * keeps the call sites' text matching flag 45's pattern.
-	 */
-	const SIGNATURE_NOT_BUILT: ErrorBody = { error: 'Electronic signature is not built yet.' };
-
-	/**
 	 * The refusal for any signed transition while the screen is not the stored
 	 * record: a save in flight, unsaved edits, or a partial date. `null` when
 	 * the screen and the record agree.
@@ -1741,17 +1706,14 @@
 	 *
 	 * ⚠️ NOT one shared handler. The gate CHECKS are shared, in `submitGate()`
 	 * above, because they are the same checks. What follows them is not: the
-	 * implementation gate posts T4/T5 at step 11 and the final gate posts T7/T8
-	 * at step 13b, with different endpoints, different meanings and different
-	 * bodies. One handler would have to be split by whichever step came first,
-	 * and it would hold a single `SIGNATURE_NOT_BUILT` reference that neither
-	 * step could remove on its own — which is exactly what flag 45's count
-	 * exists to prevent.
+	 * implementation gate posts T4/T5 and the final gate posts T7/T8, with
+	 * different endpoints, different meanings and different bodies — three
+	 * fields against two, since the final gate has no Risk Level.
 	 *
 	 * Both are synchronous up to the modal: no request, no `await`, so no
 	 * in-flight window. Each opens `openEsig()` with the meaning chosen from the
 	 * decision and `send` built from a SNAPSHOT of the buffer, so what the modal
-	 * shows is exactly what is signed (A7.5). The final gate is wired at 13b.
+	 * shows is exactly what is signed (A7.5).
 	 */
 
 	// The meaning is per TRANSITION, not per endpoint (A7.5): one endpoint, two
@@ -1793,11 +1755,34 @@
 		});
 	}
 
+	// The final gate's two, as above. T7 closes the record; T8 returns it to
+	// In Implementation.
+	const FINAL_DECISION_MEANING: Record<Decision, SignatureMeaning> = {
+		Approve: 'Approved - Final Approval',
+		Reject: 'Rejected - Final Approval'
+	};
+
 	function submitFinalDecision() {
-		if (finalDecision === null || dialog !== null) return;
+		if (cc === null || finalDecision === null || dialog !== null) return;
 		actionError = null;
 		actionNotice = null;
-		fail(submitGate(finalDecision) ?? SIGNATURE_NOT_BUILT);
+		const refusal = submitGate(finalDecision);
+		if (refusal !== null) {
+			fail(refusal);
+			return;
+		}
+		// The snapshot, as in `submitImplDecision()`: the same reasons for the
+		// `const`, for `find` over a cast, and for the unreachable `undefined`
+		// (the stored value carries `ck_cc_final_decision`). Sent as typed.
+		const buffer = finalDecision;
+		const final_decision = DECISIONS.find((d) => d === buffer.final_decision);
+		if (final_decision === undefined) return;
+		const fields = { final_decision, final_comments: buffer.final_comments };
+		const path = `/changecontrols/${encodeURIComponent(cc.cc_id)}/final-decision`;
+		openEsig(FINAL_DECISION_MEANING[final_decision], (credentials) => {
+			const body: FinalDecisionRequest = { ...credentials, ...fields };
+			return request<ChangeControlResponse>('POST', path, body);
+		});
 	}
 
 	/**
