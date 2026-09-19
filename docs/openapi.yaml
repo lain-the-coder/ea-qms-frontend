@@ -292,11 +292,15 @@ components:
         user is CC Owner or assigned Approver on active records.
         **The request is all-or-nothing** — a name change submitted alongside a
         blocked role change is also rejected.
+
+        The message differs by endpoint: `Cannot update role of a user with
+        active CCs` from `PUT /users/{userID}`, and `Cannot deactivate a user
+        with active CCs` from `.../active`.
       required: [error, blocked_cc_ids]
       properties:
         error:
           type: string
-          example: Cannot change role while the user has active change controls
+          example: Cannot update role of a user with active CCs
         blocked_cc_ids:
           type: array
           items:
@@ -419,8 +423,16 @@ components:
       type: object
       required: [full_name, email, password, role]
       properties:
-        full_name: { type: string, maxLength: 100 }
-        email: { type: string, format: email }
+        full_name:
+          type: string
+          description: Trimmed. No length limit — the column is `TEXT`.
+        email:
+          type: string
+          description: |
+            Trimmed and checked for blank ONLY — the handler does not validate
+            the format, so any non-blank string is accepted. Stored as sent
+            (not lower-cased). Uniqueness is case-insensitive: `uq_users_email`
+            is on `LOWER(email)`, so `Jane@x` and `jane@x` collide (409).
         password:
           type: string
           format: password
@@ -440,7 +452,9 @@ components:
         Both fields optional, but at least one must be present. **All-or-nothing**:
         if the role change is blocked, the name change is not saved either.
       properties:
-        full_name: { type: string, maxLength: 100 }
+        full_name:
+          type: string
+          description: Trimmed. No length limit — the column is `TEXT`.
         role: { $ref: "#/components/schemas/Role" }
 
     SetUserActiveRequest:
@@ -1135,7 +1149,11 @@ paths:
     get:
       tags: [Users]
       summary: List users
-      description: Admin only. Sorted by full name.
+      description: |
+        Admin only. Sorted by full name, ascending, with **no tie-breaker**
+        (`ORDER BY full_name`), so two users with the same name can swap
+        places between requests, and across a page boundary one may appear on
+        both pages or on neither.
       parameters:
         - $ref: "#/components/parameters/limit"
         - $ref: "#/components/parameters/offset"
@@ -1146,6 +1164,10 @@ paths:
             but the query parameter is not — the handler reads `active`, and an
             unrecognised parameter is ignored silently, so `?is_active=true`
             returns every user with no error. Omit for all users.
+
+            Parsed with Go's `strconv.ParseBool`, so `1`, `t`, `T`, `TRUE`,
+            `true`, `True` (and the false forms) are all accepted. Anything
+            else is 400 `Invalid Query Parameter for Active`.
           schema: { type: boolean }
       responses:
         "200":
@@ -1153,7 +1175,15 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/UserListResponse" }
-        "400": { $ref: "#/components/responses/BadRequest" }
+        "400":
+          description: |
+            `invalid limit: must be a positive integer`, `invalid offset: must
+            be a non-negative integer` (checked first), or `Invalid Query
+            Parameter for Active`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+              example: { error: Invalid Query Parameter for Active }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "500": { $ref: "#/components/responses/ServerError" }
@@ -1174,12 +1204,23 @@ paths:
               schema: { $ref: "#/components/schemas/UserResponse" }
         "400":
           description: |
-            Validation failed. Password rules are returned together, not one at a time.
+            A plain `ErrorResponse`, no `issues`. The handler stops at the FIRST
+            failure, in this order:
+
+            - `Invalid request body`
+            - `Full Name cannot be blank` · `Email cannot be blank` (both
+              trimmed first)
+            - `Password cannot be blank` (never trimmed)
+            - the password policy: every unmet rule, joined into ONE sentence
+              (see the example)
+            - `Role cannot be blank`, then `Invalid Role`
+
+            The email's FORMAT is not checked: any non-blank string is accepted.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
               example:
-                error: "Password must be at least 8 characters; Password must contain at least one uppercase letter"
+                error: "Password must contain at least 8 characters, at least 1 uppercase letter"
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409":

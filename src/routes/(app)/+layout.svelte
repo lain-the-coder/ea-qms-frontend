@@ -97,7 +97,12 @@
 
 		<!-- The same five links for every role: BRD §2.3.4 and §9.5.1, and all
 		     three role prototypes. All Change Controls stays active on a CC
-		     form, as it does in every cc-form-* prototype. -->
+		     form, as it does in every cc-form-* prototype.
+
+		     One target differs (flag 18): an Admin's Settings opens User
+		     Management, as the Admin prototype's sidebar does
+		     (settings-admin.html). The sidebar renders during the restore, when
+		     `auth.user` is still null, so it reads `/settings` until then. -->
 		<div class="sidebar-body">
 			<nav>
 				<a href="/dashboard" class={path === '/dashboard' ? 'active' : undefined}>Dashboard</a>
@@ -114,7 +119,12 @@
 					My Change Controls
 				</a>
 				<a href="/approvals" class={path === '/approvals' ? 'active' : undefined}>Approvals</a>
-				<a href="/settings" class={path.startsWith('/settings') ? 'active' : undefined}>Settings</a>
+				<a
+					href={auth.user?.role === 'Admin' ? '/settings/users' : '/settings'}
+					class={path.startsWith('/settings') ? 'active' : undefined}
+				>
+					Settings
+				</a>
 			</nav>
 		</div>
 	</aside>

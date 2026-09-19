@@ -80,12 +80,31 @@ for a 401.
 
 ⚠️ **Gate it on activity.** A bare timer means an idle tab refreshes forever —
 `updated_on` advances every 24 minutes, the server's 2-hour sliding window never
-expires, and since the inactivity popup is optional (A1.5), **nothing enforces
+expires, and since the inactivity popup is deferred (A1.5), **nothing enforces
 inactivity at all.** The server cannot tell a working user from an open tab; a
 refresh *is* activity as far as it knows.
 
 Skip the scheduled refresh if there has been no user interaction since the last
 one. The reactive path below covers waking from idle.
+
+⚠️ **What the timer is for — two jobs, not one.** Only `/refresh` advances the
+window (A1.8), and the 401 path's refresh does too. So:
+
+1. **A user who sends requests** is never signed out without the timer. Each
+   expired access token costs one 401 → refresh → retry on the next request. The
+   timer removes that hiccup, and nothing more.
+2. **A user who interacts but sends NO request for more than 2 hours** — writing
+   a long draft on one page, no Save, no navigation — has nothing refreshing.
+   Without the timer, the first Save gets 401 → `/refresh` 401 `Session
+   expired` → signed out, **and the unsaved edits are lost** (the navigation
+   guard stands aside on a sign-out). With the activity-gated timer, the typing
+   counts as activity and the Save succeeds. **Here the timer prevents a
+   sign-out that loses work.**
+
+The activity gate is what stops job 2 from also keeping an abandoned tab alive.
+**The falsifier, for step 16:** on a dirty form, set that session's
+`refresh_tokens.updated_on` back 2 h 1 min in psql, type, then Save — signed
+out with the timer off, saved after an activity-gated tick.
 
 Also implement that reactive path, since a laptop that slept will wake with a dead
 token:
@@ -178,7 +197,13 @@ The server's 2-hour sliding window is the real rule. A client-side "Still there?
 prompt at ~30 minutes idle is a UX nicety: **Yes** → `POST /refresh`, **No** or
 timeout → `POST /revoke` and log out.
 
-Build it last. The system is correct without it.
+**Deferred to Phase 2** (step 17, PROGRESS decision 116). With step 16's
+activity gate an abandoned session already ends 2 hours after its last refresh,
+so there is no hole. The popup would change only the *timing* — a proactive
+sign-out at ~30 minutes where today it is lazy, at the next request — and 2 hours
+is a deliberate backend choice: if it is ever judged too long, the fix is
+`refreshInactivityWindow`, not a popup. What it would still buy is a warning
+before a forced sign-out takes unsaved work.
 
 ### A1.6 Deactivation takes effect on the next request, not in 30 minutes
 
@@ -957,23 +982,34 @@ not part of the contract. Do not raise it again as a defect.
 | **401** | The wrapper handles it — refresh once, retry once, else log out |
 | **403** | "You do not have permission" — the record loaded, the action is not yours |
 | **404** | The record is gone; return to the list |
-| **409** | **Refetch the record.** Someone changed its state, so the UI is stale |
+| **409** | **On a change control: refetch the record.** Someone changed its state, so the UI is stale. **On a user: do NOT reload** — see below |
 | **500** | Generic apology. Nothing actionable client-side |
 
-**409 is the interesting one.** It means the request was valid but the record
-moved — the honest response is to reload it and re-render.
+**409 is the interesting one.** On the eight change-control 409s it means the
+request was valid but the record moved — the honest response is to reload it
+and re-render.
+
+⚠️ **The three user 409s mean something else, and none of them is "stale":**
+`A user with that email already exists` (`POST /users`) — fix the email; and the
+two `blocked_cc_ids` guards (A8.3) — nothing moved, the request was refused whole.
+Reloading there would throw away the edit the Admin needs to retry with the name
+alone.
 
 ### A8.3 A 409 with a body
 
 `PUT /users/{userID}` and `.../active` can return blocked CC-IDs:
 
 ```json
-{ "error": "Cannot change role while the user has active change controls",
+{ "error": "Cannot update role of a user with active CCs",
   "blocked_cc_ids": ["CC-001", "CC-003"] }
 ```
 
+`.../active` sends `Cannot deactivate a user with active CCs`. The caller knows
+which endpoint it called, so never tell the two apart by the message.
+
 **The request is all-or-nothing** — a name change submitted alongside a blocked
-role change is *also* rejected. Do not tell the user the name was saved.
+role change is *also* rejected. Do not tell the user the name was saved. The
+CC guard runs before any write (`HandlerUpdateUserDetails`).
 
 ## A9. Lists and pagination
 
@@ -1082,7 +1118,14 @@ history oldest-first.
   `is_active` but the query parameter is not. **An unrecognised query parameter
   is ignored silently**, so `?is_active=true` returns every user, including the
   deactivated ones, with `200 OK` and no error at all. Omit the parameter
-  entirely for all users.
+  entirely for all users. It is parsed by `strconv.ParseBool` (`1`, `t`,
+  `TRUE`… are accepted); anything else is 400 `Invalid Query Parameter for
+  Active`, after pagination.
+- ⚠️ **The sort has no tie-breaker** (`ORDER BY full_name` alone). Two users with
+  the same name can swap between requests, so across a page boundary one may
+  show on both pages or on neither. Backend flag 65; not worked around here.
+- Step 15 never sends `active`: the prototype has no status filter and shows
+  both.
 
 **`GET /approvers`** takes no parameters — it is already filtered server-side to
 active users holding the Approver role.
@@ -1092,9 +1135,11 @@ active users holding the Approver role.
 ### Sidebar
 The same five links for every role: Dashboard, All Change Controls, My Change
 Controls, Approvals and Settings (BRD §2.3.4 and §9.5.1, and all three role
-prototypes). There is no API call behind the sidebar and nothing in it is
-role-conditional. All Change Controls stays active on the CC form, as in every
-`cc-form-*` prototype.
+prototypes). There is no API call behind the sidebar. **One target is
+role-conditional:** an Admin's Settings opens `/settings/users` (User
+Management), as the Admin prototype's sidebar does; every other role's opens
+`/settings` (Profile). Step 15, PROGRESS flag 18. All Change Controls stays
+active on the CC form, as in every `cc-form-*` prototype.
 
 **Sign Out is not in the sidebar.** Every prototype puts it on Settings → Profile.
 
@@ -1199,6 +1244,37 @@ yourself. **Both are 400, not 403:** `Self Deactivation is not allowed` and
 `requireRole`'s `Forbidden`, for a non-Admin. The self-role check fires only
 when the requested role *differs*, so a body carrying your own current role is a
 200 no-op.
+
+**Your own row still gets the pencil — name only** (step 15). The API allows a
+self name change, and Profile tells the Admin "Name is changed by an Admin in
+User Management", which would be untrue without it. The prototype omits the
+pencil there; it is overridden.
+
+**Both PUTs can return the 409 `blocked_cc_ids`** (A8.3): the pencil when the
+role changes, the toggle when deactivating. Its home is a banner row directly
+beneath the user's row, for both.
+
+**Both PUTs have a no-op path:** nothing differs → `200` with the stored user,
+committed, and **no audit row**. The client sends only what changed, so an
+untouched edit sends nothing.
+
+**Both return `UserStatusResponse`**, which has no `created_on` — merge its
+fields into the row rather than replacing it.
+
+**Audit rows** (`audit_logs`, `entity_type = 'User'`). Four action types, one
+row per change, and none for a no-op:
+
+| Action | `action_type` | `field_name` | old → new |
+|---|---|---|---|
+| Create | `UserAdded` | — | — |
+| Rename | `UserUpdated` | `full_name` | old → new name |
+| Role change | **`UserRoleChanged`** | `role` | old → new role |
+| Deactivate | `UserDeactivated` | `is_active` | `true` → `false` |
+| Reactivate | `UserUpdated` | `is_active` | `false` → `true` |
+
+A rename and a role change in one request write **two** rows with one shared
+timestamp. ⚠️ **`UserUpdated` means two things** — tell them apart by
+`field_name`, never by the action alone.
 
 ### Profile
 **Read-only in Phase 1.** No self-update endpoint and no change-password endpoint.
@@ -1820,9 +1896,11 @@ express the Security Matrix.
 
 ## B9. Build order
 
-Nineteen steps: the seventeen numbered ones, with step 7 split into 7a–7d, step 8
-into 8a–8b and step 13 into 13a–13b, plus 7a+ and 7d+. Amended at 7d, which added
-7d+, at step 8, which split it, and at step 13, which split it. **A split does not
+Eighteen steps: the sixteen numbered ones, with step 7 split into 7a–7d, step 8
+into 8a–8b and step 13 into 13a–13b, plus 7a+ and 7d+. Step 17, the inactivity
+popup, is **deferred to Phase 2** (A1.5) and not counted. Amended at 7d, which
+added 7d+, at step 8, which split it, at step 13, which split it, and at step 15,
+which deferred 17. **A split does not
 change the count** — 7a–7d are still step 7, 8a–8b are still step 8 and 13a–13b
 are still step 13; only the two `+` steps are additions, which
 is why the table has more rows than the number says. Each step is independently
@@ -1854,7 +1932,7 @@ end to end, and do not merge two because they feel contiguous.
 | 14 | **File download**: the evidence name, clickable for every role in every state, through `download()` | Blob handling through the shared token and retry, the status branched on before the body is read, and the name taken from the record. Amended at step 14: it said "`Content-Disposition`", which the client deliberately does not read (A6.2) |
 | 15 | **Admin settings — user management** | **Not a variation of anything else:** inline edit rows, two separate endpoints for the pencil and the toggle, and a 409 carrying `blocked_cc_ids` |
 | 16 | **Activity-gated proactive refresh** | The gating, not just the timer — see A1.2 |
-| 17 | **Inactivity popup** | Courtesy only — the system is correct without it |
+| ~~17~~ | ~~**Inactivity popup**~~ **Deferred to Phase 2** at step 15 (PROGRESS decision 116, A1.5) | Courtesy only — the system is correct without it |
 
 **Why this order.** Steps 1–4 are infrastructure: nothing renders until they work.
 Step 5 exercises every list shape in one screen, which is a cheap way to validate
@@ -2058,6 +2136,8 @@ refused proves the whole path works.
 - **The activity-gated refresh (A1.2) is designed and never built.** The gating is
   the subtle half; a bare timer is easy to write and the dead inactivity window is
   invisible once it is wrong
+- **The inactivity popup (A1.5) is deferred to Phase 2** — step 17, decided at
+  step 15
 
 ---
 

@@ -6,6 +6,10 @@
 	Markup from docs/prototypes/owner/settings-profile-enduser.html and, for an
 	Admin, docs/prototypes/admin/settings-profile.html. The two differ only
 	where `isAdmin` branches below.
+
+	⚠️ One prototype difference is NOT followed: the two field hints. Only the
+	Admin prototype draws them, but both are true for every role, and a role
+	that can change neither field needs them most (decision 117).
 -->
 <script lang="ts">
 	import { goto } from '$app/navigation';
@@ -53,7 +57,6 @@
 <div class="settings-layout">
 	<nav class="settings-nav">
 		{#if isAdmin}
-			<!-- Step 15. A 404 until then. -->
 			<a href="/settings/users">
 				<i class="bi bi-people"></i> User Management
 			</a>
@@ -89,9 +92,9 @@
 						value={user.full_name}
 						disabled
 					/>
-					{#if isAdmin}
-						<div class="field-hint">Name is changed by an Admin in User Management.</div>
-					{/if}
+					<!-- Every role: only an Admin can rename anyone
+					     (`requireRole` on `PUT /users/{id}`), themselves included. -->
+					<div class="field-hint">Name is changed by an Admin in User Management.</div>
 				</div>
 				<div class="form-group">
 					<label for="profile-email">Email Address</label>
@@ -102,9 +105,8 @@
 						value={user.email}
 						disabled
 					/>
-					{#if isAdmin}
-						<div class="field-hint">Email cannot be changed.</div>
-					{/if}
+					<!-- Every role: no endpoint changes an email. -->
+					<div class="field-hint">Email cannot be changed.</div>
 				</div>
 			</div>
 

@@ -121,6 +121,23 @@ shape as the server, so both open the same dialog.
 `PUT /users/{id}` and `.../active` can return `blocked_cc_ids` on a 409, and the
 request is **all-or-nothing** — do not tell the user the name was saved.
 
+### User management (step 15)
+
+- **The 409 `blocked_cc_ids` goes in a banner row beneath the user's row**, for
+  both the pencil and the toggle. The heading comes from which control was used,
+  never from the message; the two messages differ by endpoint anyway.
+- ⚠️ **A users 409 is not "the record moved". Do not reload** (A8.2). Keep the edit
+  row open with what was typed, so the Admin can retry with the name alone.
+- **Send only what changed.** An untouched edit sends nothing and closes the row.
+  Both PUTs have a server no-op (200, committed, no audit row) for what still
+  arrives unchanged.
+- **Merge `UserStatusResponse` into the row, never replace it**: it has no
+  `created_on`.
+- **The password policy is the server's alone.** The create form mirrors only the
+  four blank checks, in Go's order, with Go's sentences; the policy 400 is shown
+  verbatim. Never trim the password.
+- **`?active=` is never sent**; the URL carries only `limit` and `offset`.
+
 ## Saving (blueprint A2, A3)
 
 ⚠️ **Send only the fields that changed**, compared through the same function that
@@ -365,6 +382,13 @@ in `localStorage`, **not rotated**.
 an idle tab refreshes forever and the server's inactivity window never expires.
 Skip the scheduled refresh when nothing happened; the 401 path covers wake-from-idle.
 **Only `/refresh` advances that window** — ordinary API calls do not.
+
+⚠️ **The timer has two jobs (A1.2).** For a user who sends requests it only saves
+the once-per-token 401 → refresh → retry. For a user who interacts but sends **no
+request for over 2 hours** (a long unsaved draft), it is the only thing keeping
+the window alive: without it, their first Save is signed out and the edits are
+lost. Never describe it as "prevents surprise logouts" or as "only a hiccup";
+each is half true.
 
 ⚠️ **`/login`, `/refresh` and `/revoke` are exempt from both the bearer header
 and the 401-refresh-retry path.** They are mounted without the auth middleware

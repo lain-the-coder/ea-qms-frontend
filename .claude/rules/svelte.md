@@ -65,7 +65,7 @@ them. `ChangeControlList.svelte` is the worked example.
   sign-out calls `goto('/login')`, which runs the same callbacks. A prompt there
   lets the user stay on a form that cannot save.
 - **Every sign-out must clear `auth.user` before it navigates.** That includes
-  step 17's inactivity popup.
+  any future inactivity popup (step 17, deferred to Phase 2).
 - **For `type: 'leave'`, only `cancel()`.** SvelteKit's `beforeunload` listener
   then shows the browser's dialog. `confirm()` is blocked there, and no
   `<svelte:window>` is needed.

@@ -150,6 +150,10 @@ export interface ValidationErrorResponse {
  * is CC Owner or assigned Approver on active records. The request is
  * all-or-nothing: a name change submitted alongside a blocked role change is
  * rejected too.
+ *
+ * `error` is `Cannot update role of a user with active CCs` from the first and
+ * `Cannot deactivate a user with active CCs` from the second. Do not tell them
+ * apart by the message: the caller knows which endpoint it called.
  */
 export interface BlockedRoleChangeResponse {
 	error: string;
