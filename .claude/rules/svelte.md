@@ -197,6 +197,20 @@ hidden `<input type="file">` through `getElementById().click()`, because
 `preventDefault()`, even while locked: an unhandled drop navigates the tab to
 the file.
 
+⚠️ **The evidence file's name is the download control** (step 14): a
+`<span role="button" tabindex="0" class="login-link">` inside the `.meta-value`,
+with Enter and Space handled in code, as on the upload box.
+- **It sits outside `mayEdit`.** Every role in every state downloads, and it is
+  gated only on `implementation_evidence !== null`.
+- **Never `<a href>`**, because a link cannot send the bearer (trap 4).
+- **`.login-link`** is the only link colour in global.css with no layout rules.
+  The text cursor on hover is a known cost of not adding a second `style:` (a
+  step-14 flag).
+- **The save is a detached `document.createElement('a')`** with `download` set,
+  clicked and never appended. Its click does not reach `document`, so
+  `beforeNavigate` never fires, and a dirty form is neither prompted nor
+  touched.
+
 ## Enum values
 
 Never copy an `<option value>` from a prototype — six of them use en-dashes

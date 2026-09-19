@@ -60,7 +60,9 @@ They match the wire format, narrow inside `{#if}`, and need no conversion.
 - Parse **all three** error shapes into the `ErrorBody` union (below), so the
   caller narrows with `'issues' in err` and `'blocked_cc_ids' in err`, two
   independent checks
-- A separate path for file download, returning a **blob**
+- A separate path for file download, returning a **blob**: `download()`. It
+  shares `request()`'s token and retry through one private `authorised(…, read)`.
+  **Never copy the retry into a second function**; add a `read` instead
 
 A raw `fetch` in a component skips the token, the refresh and the error parsing.
 
@@ -209,6 +211,28 @@ the response, never from the `File`.
 
 **Side effects:** `last_updated_on` and `last_updated_by_id` move on every
 upload, and **no audit row is written** (SC-5).
+
+### The evidence download (blueprint A6.2)
+
+`GET …/files/implementation_evidence` through `download(path)`, which returns
+`ApiResult<Blob>`. **Any role, any state**: there is no role, owner or state
+check, while POST on the same path is owner-only.
+
+- **The status is branched on before the body is read**, in `toResult`. Every
+  error, the 401s included, is JSON, so the 401 retry works unchanged. Never
+  call `.blob()` on an unchecked response: it saves a JSON error as the file.
+- **Truncation is status 0**, "The download was interrupted. Try again.",
+  caught in `download()` only. It is reachable through the 30 s `WriteTimeout`
+  (flag 61).
+- ⚠️ **The filename comes from `cc.implementation_evidence.file_name`, set as
+  `a.download`, never from `Content-Disposition`.** Go writes it as raw UTF-8,
+  and `Headers.get` returns one character per byte, so a non-ASCII name arrives
+  garbled. The header is exposed, and it is still the wrong source.
+- **Revoke the object URL straight after `click()`.** The pending download
+  already holds the Blob.
+- **It writes nothing**: no audit row, and `last_updated_on` does not move.
+- **None of its errors is reachable from the UI** (no delete routes exist).
+  Render any verbatim through `fail()`.
 
 ## Transitions
 

@@ -5,7 +5,8 @@
 	whether any do: the gate step 9's Submit depends on. Step 9 adds T2 and
 	the one e-signature modal every signed transition opens. Step 10 adds T3,
 	which opens that same modal with a reason field in it. Step 12 adds the
-	evidence upload, whose response is the record, like a save's.
+	evidence upload, whose response is the record, like a save's. Step 14
+	makes the evidence file's name download it, for everyone.
 
 	Markup from docs/prototypes/owner/cc-form-closed.html, the one prototype
 	with every section populated. The other cc-form-* prototypes differ in which
@@ -40,7 +41,7 @@
 	import { onMount } from 'svelte';
 	import { afterNavigate, beforeNavigate } from '$app/navigation';
 	import { page } from '$app/state';
-	import { request, type ApiResult } from '$lib/api';
+	import { download, request, type ApiResult } from '$lib/api';
 	import { auth } from '$lib/auth.svelte';
 	import { formatDateTime } from '$lib/format';
 	import {
@@ -1534,6 +1535,70 @@
 		}
 	}
 
+	// ── Evidence download (step 14) ─────────────────────────────────────────
+
+	// One click, one file: a second click while the first is in flight does
+	// nothing. Deliberately NOT one of `editable()`'s locks, because a download
+	// never reaches `setRecord()`, so it rebuilds no form object. For the same
+	// reason it does not refuse while dirty.
+	let downloading = false;
+
+	/**
+	 * `GET /changecontrols/{ccID}/files/implementation_evidence`, for every
+	 * role in every state (A6.2). The server checks no role, owner or state.
+	 *
+	 * The file is saved under the RECORD's name, set as `a.download`. It is
+	 * the same sanitised column the server writes into `Content-Disposition`,
+	 * and the header is not read. Go writes the name as raw UTF-8, and
+	 * `Headers.get` hands back one character per byte, so any non-ASCII name
+	 * would arrive garbled. The name is taken at click time. If another tab
+	 * replaced the file under a new name since this page loaded, the new bytes
+	 * get the old name until a reload (flag, step 14).
+	 *
+	 * The anchor is created detached and never added to the page. Its click
+	 * does not bubble to `document`, so SvelteKit's link handling and the
+	 * navigation guard never see it: a dirty form is neither prompted nor
+	 * touched.
+	 *
+	 * ⚠️ The revoke straight after `click()` does not cancel the download.
+	 * `click()` follows the link synchronously, and resolving a `blob:` URL
+	 * takes hold of the Blob itself, so revoking only removes the URL's entry.
+	 * Left unrevoked, the Blob, up to 10 MB, would live until the page unloads.
+	 *
+	 * A failure goes to the bar through `fail()` with the server's wording
+	 * verbatim, unless the user has moved on to another record. A success is
+	 * delivered either way, as a browser download carries on after navigation.
+	 */
+	async function downloadEvidence() {
+		if (downloading || cc === null || cc.implementation_evidence === null) return;
+		actionError = null;
+		actionNotice = null;
+		const name = cc.implementation_evidence.file_name;
+		downloading = true;
+		const mine = latest;
+		const result = await download(
+			`/changecontrols/${encodeURIComponent(cc.cc_id)}/files/implementation_evidence`
+		);
+		downloading = false;
+
+		if (result.ok) {
+			const href = URL.createObjectURL(result.data);
+			const a = document.createElement('a');
+			a.href = href;
+			a.download = name;
+			a.click();
+			URL.revokeObjectURL(href);
+		} else if (mine === latest) {
+			fail(result.error);
+		}
+	}
+
+	function evidenceNameKey(e: KeyboardEvent) {
+		if (e.key !== 'Enter' && e.key !== ' ') return;
+		e.preventDefault();
+		downloadEvidence();
+	}
+
 	// ── Submitting a signed transition ──────────────────────────────────────
 
 	/**
@@ -2738,10 +2803,17 @@
 
 		<!-- The metadata line shows whenever a file exists (decision 50). The
 		     name is the STORED one, which `sanitizeFilename` may have changed
-		     from the name the user picked. Step 14 turns it into a download
-		     `<button>`, never an `<a href>`, because a link cannot send the
-		     bearer (trap 4). `content_type` is not shown: the upload stores it
-		     as a constant, after checking that the bytes are a PDF. -->
+		     from the name the user picked. `content_type` is not shown: the
+		     upload stores it as a constant, after checking that the bytes are a
+		     PDF. -->
+		<!-- The name downloads the file (step 14), for every role in every state,
+		     so it sits OUTSIDE `mayEdit`. It is never an `<a href>`, because a
+		     link cannot send the bearer (trap 4). It is a `role="button"` span,
+		     the upload box's pattern: `.login-link` is the only link colour in
+		     global.css that brings no layout rules, and a native `<button>`
+		     would bring its own chrome. It keeps the text cursor rather than
+		     adding a second `style:` (flag, step 14). No prototype draws a
+		     download control. -->
 		<div class="form-group">
 			<!-- The label deliberately points at nothing. `for` on the hidden
 			     file input would make a label click open the picker natively,
@@ -2752,7 +2824,13 @@
 			>
 			{#if cc.implementation_evidence}
 				<div class="meta-value">
-					{cc.implementation_evidence.file_name} · {formatFileSize(
+					<span
+						class="login-link"
+						role="button"
+						tabindex="0"
+						onclick={downloadEvidence}
+						onkeydown={evidenceNameKey}>{cc.implementation_evidence.file_name}</span
+					> · {formatFileSize(
 						cc.implementation_evidence.file_size
 					)} · Uploaded {formatDateTime(cc.implementation_evidence.uploaded_on)}
 				</div>

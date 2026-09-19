@@ -1933,11 +1933,22 @@ paths:
 
         ⚠️ **This cannot be a plain `<a href>`.** The endpoint requires the bearer
         token and a link cannot send headers. Use `fetch()` → `.blob()` →
-        `URL.createObjectURL()` → synthesise a click. The `try/catch` also covers
-        truncation, which the browser detects via `Content-Length`.
+        `URL.createObjectURL()` → synthesise a click. **Branch on the status
+        before reading the body:** every error is a JSON `ErrorResponse`, and
+        `.blob()` would read one as the file. Wrap the read in a `try/catch`:
+        it rejects on truncation, which the browser detects via
+        `Content-Length`.
+
+        **The filename is written raw, with no `filename*`.** A browser client
+        reading this header gets any non-ASCII name garbled, because header
+        values are exposed one byte per character. Prefer
+        `implementation_evidence.file_name` from the CC response, which is the
+        same stored name.
 
         Use the `implementation_evidence` object on the CC response to decide
         whether to offer the download — do not probe this endpoint.
+
+        Read-only: no audit row, and `last_updated_on` does not move.
       parameters:
         - $ref: "#/components/parameters/ccID"
         - $ref: "#/components/parameters/fieldName"
@@ -1954,7 +1965,13 @@ paths:
             application/pdf:
               schema: { type: string, format: binary }
         "400":
-          description: Unsupported `fieldName`.
+          description: |
+            In the handler's order, both before any lookup:
+
+            | Message | Cause |
+            |---|---|
+            | `CC-ID cannot be blank` | the `ccID` path segment is blank after trimming, e.g. `%20` |
+            | `Field name in path parameter is not one of accepted values` | `fieldName` is not `implementation_evidence` |
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
@@ -1962,7 +1979,8 @@ paths:
         "404":
           description: |
             Either the change control does not exist, or it has no file. The two
-            are distinguished by the message.
+            are distinguished by the message, and the change control is looked
+            up first.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }

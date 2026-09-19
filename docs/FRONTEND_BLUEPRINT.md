@@ -646,24 +646,75 @@ nothing new.
 
 ### A6.2 Download cannot be a hyperlink
 
-⚠️ The endpoint requires the bearer token, and `<a href>` cannot send headers.
-The obvious approach fails with a 401.
-
-```js
-const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-const blob = await res.blob();          // throws if the transfer was truncated
-const href = URL.createObjectURL(blob);
-// synthesise a click, then URL.revokeObjectURL(href)
+```
+GET /changecontrols/{ccID}/files/implementation_evidence
 ```
 
-The `try/catch` also covers truncation: the browser compares bytes received
-against `Content-Length` and rejects the promise itself. No manual byte counting.
+⚠️ The endpoint requires the bearer token, and `<a href>` cannot send headers.
+The obvious approach fails with a 401 `Unauthorized`.
 
-`Content-Disposition` carries the filename; `Content-Length` the size. Both are
-exposed to JavaScript by the CORS configuration.
+It also needs the **401 refresh-and-retry** (A1.2), so it cannot be a raw
+`fetch`. It goes through `api.ts`'s `download()`, which shares `request()`'s
+token and retry and reads the success body with `blob()` instead of `json()`.
+Built at step 14.
+
+```ts
+const result = await download(path);         // ApiResult<Blob>
+if (result.ok) {
+  const href = URL.createObjectURL(result.data);
+  const a = document.createElement('a');       // detached, never appended
+  a.href = href;
+  a.download = cc.implementation_evidence.file_name;   // the record's name
+  a.click();
+  URL.revokeObjectURL(href);
+} else fail(result.error);
+```
+
+**Branch on the status before reading the body.** Success is raw bytes, and
+every error is a JSON `ErrorResponse`. `blob()` reads a JSON error body quite
+happily, so an unbranched read saves `{"error": …}` to disk as the PDF.
+`toResult` branches once, for every caller, so the blob reader never sees an
+error.
+
+**Truncation is reachable.** `Content-Length` is set, so the browser rejects
+`blob()` when fewer bytes arrive. The server's 30 s `WriteTimeout` cuts a slow
+transfer after the 200 has gone out (flag 61). `download()` catches it and
+returns status 0 with "The download was interrupted. Try again." No manual byte
+counting is needed.
+
+**Take the filename from the record, not the header.** `Content-Disposition` is
+exposed by CORS, and so is `Content-Length`. But Go writes the name as raw
+UTF-8 with no `filename*`, while `Headers.get` returns one character per byte,
+so a non-ASCII name arrives garbled, and reading it would need a quoted-string
+parser besides. `implementation_evidence.file_name` is the same column. Because
+the download is of a `blob:` URL, the browser never sees the API's header: the
+name on disk comes from `a.download`.
+
+**Revoke straight after the click.** `click()` follows the link synchronously,
+and resolving a `blob:` URL takes hold of the Blob itself, so the pending
+download survives the revoke. Left unrevoked, the Blob lives until the page
+unloads. The detached anchor's click never reaches `document`, so SvelteKit's
+router and the navigation guard do not see it.
 
 Download is open to **any authenticated role, in any state** — an approver must
-review evidence, and a closed record's evidence must stay reachable.
+review evidence, and a closed record's evidence must stay reachable. There is
+no role, owner or state check. POST on the same path is owner-only, so the
+method is the only difference.
+
+**It writes nothing:** two `SELECT`s and no transaction, so there is no audit
+row and `last_updated_on` does not move.
+
+**Errors, in the handler's order:**
+1. 400 `CC-ID cannot be blank`, on the trimmed ID
+2. 400 `Field name in path parameter is not one of accepted values`
+3. 404 `Change Control not found`
+4. 404 `File not found for Implementation Evidence field`
+5. 500 `Something went wrong`
+
+`middlewareAuth`'s 401s come first. **None is reachable from the UI.** The path
+is built from the loaded record, no route deletes a record or a file, and the
+name is clickable only while `implementation_evidence` is not `null`. Render
+any of them verbatim.
 
 ### A6.3 Do not probe for a file's existence
 
@@ -1704,7 +1755,9 @@ Responsibilities:
   caller can narrow with `'issues' in err` and `'blocked_cc_ids' in err` — two
   independent checks, not a chain
 - Expose a separate path for the file download, which returns a **blob** rather
-  than JSON (A6.2)
+  than JSON (A6.2). **Built at step 14** as `download()`. It is not a second
+  copy of the retry: `request()` and `download()` both call one private
+  `authorised(method, path, body, read)` and differ only in `read`.
 
 A raw `fetch` in a component is a request that skips the token, the refresh and
 the error parsing. There should be none.
@@ -1798,7 +1851,7 @@ end to end, and do not merge two because they feel contiguous.
 | 12 | **File upload** — the evidence control: the prototype's box, where choosing or dropping one file is the upload, with no Upload button. Narrowed at step 8: the save half moved to 8b. Amended at step 12: the response is the whole record, so the upload refuses while the form is dirty and locks it while in flight | `FormData`, the part named `file`, the PDF/size limits, and the stored filename differing from the chosen one |
 | **13a** | **T6** — `In Implementation` → `Pending Final Approval` through the step-9 modal, with one constant meaning. Also: the future-date rule in the submit gate and `max` on the date input. Split from step 13 at step 13a | The owner's second submit, the gate's second date rule, and a record leaving the state that owns the upload — the box and the editable fields go with it |
 | **13b** | **The final decision (T7/T8)** through the same modal, with the meaning chosen by the decision, **and the full loop** on one record: T6 → T8 reject → `In Implementation` → resubmit → T7 approve → `Closed`. The signature history panel moved to 7a | The last gate, a rejection returning a record to an earlier state, and the whole state machine exercised end to end |
-| 14 | **File download** | Blob handling, `Content-Disposition` |
+| 14 | **File download**: the evidence name, clickable for every role in every state, through `download()` | Blob handling through the shared token and retry, the status branched on before the body is read, and the name taken from the record. Amended at step 14: it said "`Content-Disposition`", which the client deliberately does not read (A6.2) |
 | 15 | **Admin settings — user management** | **Not a variation of anything else:** inline edit rows, two separate endpoints for the pencil and the toggle, and a 409 carrying `blocked_cc_ids` |
 | 16 | **Activity-gated proactive refresh** | The gating, not just the timer — see A1.2 |
 | 17 | **Inactivity popup** | Courtesy only — the system is correct without it |

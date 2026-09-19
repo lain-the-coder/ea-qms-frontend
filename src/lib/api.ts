@@ -7,7 +7,8 @@
  * Blueprint A1.2.
  *
  * That exemption comes from how the calls are built, not from a list of
- * paths. Only `request`, at the bottom, has a 401 path to be exempted from.
+ * paths. Only `authorised`, at the bottom, has a 401 path to be exempted
+ * from, and only `request` and `download` call it.
  *
  * Import direction: this module imports the auth store, and the store imports
  * nothing. Pages orchestrate between the two.
@@ -31,7 +32,8 @@ import type {
  *
  * `status: 0` means no response arrived at all. That covers a network
  * failure, a CORS block (A12), and a connection the server closed without
- * answering.
+ * answering. It also covers a download whose body was cut off after its
+ * 200 (see `download`).
  */
 export type ApiResult<T> = { ok: true; data: T } | { ok: false; status: number; error: ErrorBody };
 
@@ -72,7 +74,16 @@ async function send(
 	}
 }
 
-async function toResult<T>(res: Response | null): Promise<ApiResult<T>> {
+/**
+ * `read` reads a SUCCESS body only. JSON unless told otherwise, and only the
+ * download passes `blob()`. An error body never reaches it: every error the
+ * API sends is JSON, the download's included, so the status is branched on
+ * here, before anything is read, once for every caller (A6.2).
+ */
+async function toResult<T>(
+	res: Response | null,
+	read: (res: Response) => Promise<T> = (r) => r.json()
+): Promise<ApiResult<T>> {
 	if (res === null) {
 		return {
 			ok: false,
@@ -81,13 +92,13 @@ async function toResult<T>(res: Response | null): Promise<ApiResult<T>> {
 		};
 	}
 	if (res.ok) {
-		// Every success is assumed to carry JSON, and there is deliberately no
+		// Every success is assumed to carry a body, and there is deliberately no
 		// 204 guard here. The API's only bodiless success is `/revoke`, which
 		// never comes through this function (see `revoke`). A guard would have
 		// to return `data: undefined as T`, a cast that lies to every caller
 		// about `T`. If another 204 endpoint ever appears, give its caller an
 		// explicit `ApiResult<void>` path instead.
-		return { ok: true, data: (await res.json()) as T };
+		return { ok: true, data: await read(res) };
 	}
 	try {
 		return { ok: false, status: res.status, error: (await res.json()) as ErrorBody };
@@ -190,19 +201,20 @@ function signOut(reason: string | null): void {
 }
 
 /**
- * Every call to an authenticated endpoint. It attaches the access token and,
- * when the token was rejected, refreshes once and retries once. It never
- * loops. A1.2.
+ * Every call to an authenticated endpoint goes through here, by way of
+ * `request` or `download` below. It attaches the access token and, when the
+ * token was rejected, refreshes once and retries once. It never loops. A1.2.
  *
- * Never call it for `/login`, `/refresh` or `/revoke`. They have their own
- * functions above, which is what keeps them out of this path.
+ * `read` is the only thing the two callers differ in, so the refresh dance
+ * exists once. Two copies of it would drift apart.
  */
-export async function request<T>(
+async function authorised<T>(
 	method: Method,
 	path: string,
-	body?: unknown
+	body: unknown,
+	read: (res: Response) => Promise<T>
 ): Promise<ApiResult<T>> {
-	const first = await toResult<T>(await send(method, path, body, auth.accessToken));
+	const first = await toResult<T>(await send(method, path, body, auth.accessToken), read);
 	if (first.ok || first.status !== 401) return first;
 	if (first.error.error === DEACTIVATED) {
 		signOut(DEACTIVATED);
@@ -227,7 +239,7 @@ export async function request<T>(
 	// One retry. The same body rule applies: if the retry reaches the handler
 	// and the e-signature is wrong, that "Invalid credentials" goes back to
 	// the caller, and it does not end the session.
-	const retry = await toResult<T>(await send(method, path, body, auth.accessToken));
+	const retry = await toResult<T>(await send(method, path, body, auth.accessToken), read);
 	if (
 		!retry.ok &&
 		retry.status === 401 &&
@@ -236,4 +248,33 @@ export async function request<T>(
 		signOut(retry.error.error);
 	}
 	return retry;
+}
+
+/**
+ * Every JSON call to an authenticated endpoint.
+ *
+ * Never call it for `/login`, `/refresh` or `/revoke`. They have their own
+ * functions above, which is what keeps them out of this path.
+ */
+export function request<T>(method: Method, path: string, body?: unknown): Promise<ApiResult<T>> {
+	return authorised<T>(method, path, body, (r) => r.json());
+}
+
+/**
+ * A file download: the same token and 401 retry as `request`, with the
+ * success body read as a `Blob` (A6.2). A link cannot do this, because it
+ * cannot send the bearer (trap 4).
+ *
+ * ⚠️ The catch is for a body cut off after its 200. `Content-Length` is set,
+ * so the browser rejects `blob()` when fewer bytes arrive, and the server's
+ * 30 s `WriteTimeout` makes that reachable on a slow link (flag 61). It is
+ * here and not in `toResult`, where it would change what a malformed JSON
+ * success does on every other call.
+ */
+export async function download(path: string): Promise<ApiResult<Blob>> {
+	try {
+		return await authorised('GET', path, undefined, (r) => r.blob());
+	} catch {
+		return { ok: false, status: 0, error: { error: 'The download was interrupted. Try again.' } };
+	}
 }
